@@ -31,9 +31,26 @@
         </div>
       </div>
       <div>
-        <label class="sub-label">Est. finish time</label>
+        <label class="sub-label">Est. finish</label>
         <div id="finish-time" class="finish-time-display">—</div>
       </div>
+      <details class="rider-details">
+        <summary>Rider profile</summary>
+        <div class="rider-grid">
+          <div>
+            <label class="sub-label">Rider weight</label>
+            <div class="unit-input"><input type="number" id="rider-weight" value="75" min="30" max="150" /><span class="unit-badge">kg</span></div>
+          </div>
+          <div>
+            <label class="sub-label">Bike weight</label>
+            <div class="unit-input"><input type="number" id="bike-weight" value="9" min="4" max="20" /><span class="unit-badge">kg</span></div>
+          </div>
+          <div>
+            <label class="sub-label">FTP</label>
+            <div class="unit-input"><input type="number" id="rider-ftp" value="220" min="80" max="500" /><span class="unit-badge">W</span></div>
+          </div>
+        </div>
+      </details>
     </div>
 
     <div class="card">
@@ -56,14 +73,20 @@
     <div id="route-info" class="card hidden">
       <div class="card-header">
         <h3>Route</h3>
-        <button id="download-btn" class="btn-wahoo" title="Download GPX">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-            <polyline points="7 10 12 15 17 10"/>
-            <line x1="12" y1="15" x2="12" y2="3"/>
-          </svg>
-          Download
-        </button>
+        <div class="route-actions">
+          <button id="reverse-btn" class="btn-icon" title="Reverse direction">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 7h13l-3-3m3 3l-3 3M21 17H8l3-3m-3 3l3 3"/>
+            </svg>
+          </button>
+          <button id="download-btn" class="btn-icon" title="Download GPX">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="stats-row">
         <div class="stat">
@@ -83,25 +106,70 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
         </svg>
-        Analyze Wind
+        Analyze Wind &amp; Weather
       </button>
     </div>
 
+    <!-- Climbs detected from elevation -->
+    <div id="climbs-section" class="card hidden">
+      <label class="field-label">Climbs</label>
+      <div id="climbs-list"></div>
+    </div>
+
     <div id="wind-section" class="hidden">
+      <!-- Ride coach summary -->
+      <div id="coach-card" class="card">
+        <label class="field-label">Ride Summary</label>
+        <div class="coach-grid">
+          <div class="coach-item"><span class="coach-label">TSS</span><span id="coach-tss" class="coach-value">—</span></div>
+          <div class="coach-item"><span class="coach-label">Avg power</span><span id="coach-power" class="coach-value">—</span></div>
+          <div class="coach-item"><span class="coach-label">Calories</span><span id="coach-kcal" class="coach-value">—</span></div>
+          <div class="coach-item"><span class="coach-label">Water</span><span id="coach-water" class="coach-value">—</span></div>
+        </div>
+        <div id="coach-fuel" class="coach-fuel"></div>
+      </div>
+
+      <!-- Best departure time -->
+      <div id="departure-card" class="card">
+        <label class="field-label">Best Departure Time</label>
+        <p class="helper-text" id="departure-best">—</p>
+        <div id="departure-list"></div>
+      </div>
+
+      <!-- Weather summary -->
       <div id="wind-summary" class="card wind-summary-card">
         <div class="summary-item">
           <span class="summary-label">Avg wind</span>
           <span id="wind-avg" class="summary-value">—</span>
         </div>
         <div class="summary-item">
-          <span class="summary-label">Max wind</span>
+          <span class="summary-label">Max gust</span>
           <span id="wind-max" class="summary-value">—</span>
         </div>
         <div class="summary-item">
           <span class="summary-label">Headwind</span>
           <span id="wind-head" class="summary-value">—</span>
         </div>
+        <div class="summary-item">
+          <span class="summary-label">Temp</span>
+          <span id="weather-temp" class="summary-value">—</span>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">Feels</span>
+          <span id="weather-feels" class="summary-value">—</span>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">Rain</span>
+          <span id="weather-rain" class="summary-value">—</span>
+        </div>
       </div>
+
+      <!-- Pacing strategy -->
+      <div id="pacing-card" class="card">
+        <label class="field-label">Pacing Strategy</label>
+        <ul id="pacing-list" class="pacing-list"></ul>
+      </div>
+
       <div class="section-header">
         <span class="section-title">Wind Along Route</span>
       </div>

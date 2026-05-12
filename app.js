@@ -13,6 +13,8 @@ let routePoints    = [];
 let routeDistances = [];
 let rawGpx         = '';
 let rawGpxName     = '';
+let lastResults    = [];   // sampled points with wind+weather, cached
+let lastClimbs     = [];   // detected climbs on current route
 
 // ── Bootstrap ────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -77,6 +79,27 @@ function initUI() {
   document.getElementById('ride-speed').addEventListener('input', updateFinishTime);
   document.getElementById('ride-time').addEventListener('input', updateFinishTime);
   document.getElementById('download-btn').addEventListener('click', downloadGpx);
+  document.getElementById('reverse-btn').addEventListener('click', reverseRoute);
+
+  // Persist rider profile
+  ['rider-weight', 'bike-weight', 'rider-ftp'].forEach(id => {
+    const el = document.getElementById(id);
+    const saved = localStorage.getItem('rw_' + id);
+    if (saved) el.value = saved;
+    el.addEventListener('change', () => localStorage.setItem('rw_' + id, el.value));
+  });
+}
+
+function reverseRoute() {
+  if (!routePoints.length) { showToast('Load a route first', 'error'); return; }
+  routePoints = [...routePoints].reverse();
+  rawGpx = rawGpx; // GPX content itself isn't reversed (just display)
+  displayRoute(routePoints);
+  if (lastResults.length) {
+    setTimeout(() => analyzeWind(routePoints), 80);
+  } else {
+    showToast('Route reversed', 'success');
+  }
 }
 
 function downloadGpx() {
@@ -166,8 +189,13 @@ function displayRoute(pts) {
   document.getElementById('route-info').classList.remove('hidden');
   renderElevationProfile(pts);
 
+  // Detect climbs (independent of wind analysis)
+  lastClimbs = detectClimbs(pts, routeDistances);
+  renderClimbs(lastClimbs);
+
   document.getElementById('wind-section').classList.add('hidden');
   document.getElementById('wind-table').innerHTML = '';
+  lastResults = [];
 }
 
 function addEndpoint(latlng, color, label) {
@@ -224,16 +252,16 @@ async function analyzeWind(pts) {
         try {
           const raw  = await fetchWind(s.lat, s.lon);
           const wind = windAtTime(raw, s.estTime.getTime());
-          return { ...s, wind };
+          return { ...s, wind, rawWind: raw };
         } catch (e) {
           console.warn('Wind fetch failed:', e.message);
-          return { ...s, wind: null };
+          return { ...s, wind: null, rawWind: null };
         }
       }));
       results.push(...fetched);
       setLoading(true,
         Math.round((results.length / samples.length) * 100),
-        `Fetching wind (${results.length}/${samples.length})…`);
+        `Fetching wind & weather (${results.length}/${samples.length})…`);
     }
   } finally {
     setLoading(false);
@@ -242,17 +270,43 @@ async function analyzeWind(pts) {
   const valid = results.filter(r => r.wind);
   if (!valid.length) { showToast('No wind data — check API key', 'error'); return; }
 
+  // Compute gradient + power for each sample
+  for (let i = 0; i < results.length; i++) {
+    const next = results[i + 1] ?? results[i];
+    const dDist = Math.max(1, next.distFromStart - results[i].distFromStart);
+    const dEle  = (next.ele ?? results[i].ele ?? 0) - (results[i].ele ?? 0);
+    results[i].gradient = (dEle / dDist) * 100;
+  }
+  const riderMass = riderTotalMass();
+  for (const r of results) {
+    if (!r.wind) { r.power = null; continue; }
+    const hw = headwind(r.wind.speed, r.wind.dir, r.bearing);
+    r.headwindMs = hw;
+    r.power = estimatePower(speed, r.gradient, -hw, riderMass);
+  }
+
+  lastResults = results;
   renderColoredRoute(results, pts);
   renderMarkers(results);
   renderTable(results);
-  showToast(`Wind loaded for ${valid.length} points`, 'success');
+  renderCoachCard(results, totalDist, speed);
+  renderWeatherSummary(results);
+  renderDepartureRecommender(results, totalDist, speed, rideTime);
+  renderPacingStrategy(results, lastClimbs);
+  showToast(`Wind & weather loaded for ${valid.length} points`, 'success');
 }
 
 async function fetchWind(lat, lon) {
   const res = await fetch('https://api.windy.com/api/point-forecast/v2', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lat, lon, model: 'gfs', parameters: ['wind'], levels: ['surface'], key: WINDY_KEY }),
+    body: JSON.stringify({
+      lat, lon,
+      model: 'gfs',
+      parameters: ['wind', 'temp', 'windGust', 'rh', 'precip'],
+      levels: ['surface'],
+      key: WINDY_KEY,
+    }),
   });
   if (!res.ok) {
     const txt = await res.text().catch(() => res.status);
@@ -268,14 +322,38 @@ function windAtTime(data, targetMs) {
     const d = Math.abs(ts[i] - targetMs);
     if (d < minDiff) { minDiff = d; idx = i; }
   }
-  const u = data['wind_u-surface'][idx];
-  const v = data['wind_v-surface'][idx];
+  const u    = data['wind_u-surface'][idx];
+  const v    = data['wind_v-surface'][idx];
+  const tK   = data['temp-surface']?.[idx];
+  const gust = data['gust-surface']?.[idx];
+  const rh   = data['rh-surface']?.[idx];
+  const pr   = data['past3hprecip-surface']?.[idx];
+  const speed = Math.sqrt(u * u + v * v);
+  const tempC = tK != null ? tK - 273.15 : null;
   return {
-    speed:     Math.sqrt(u * u + v * v),
+    speed,
     dir:       (Math.atan2(u, v) * 180 / Math.PI + 360) % 360,
     u, v,
+    gust:      gust ?? speed,
+    tempC,
+    feelsLikeC: tempC != null ? feelsLike(tempC, speed, rh) : null,
+    rh:        rh != null ? rh : null,
+    precipMm:  pr ?? 0,
     timestamp: new Date(ts[idx]),
   };
+}
+
+function feelsLike(tempC, windMs, rh) {
+  // Wind chill (Environment Canada): valid for T <= 10°C and wind > 1.3 m/s
+  if (tempC <= 10 && windMs > 1.3) {
+    const v = windMs * 3.6; // km/h
+    return 13.12 + 0.6215 * tempC - 11.37 * Math.pow(v, 0.16) + 0.3965 * tempC * Math.pow(v, 0.16);
+  }
+  // Heat index (simplified) for T >= 27°C
+  if (tempC >= 27 && rh != null) {
+    return tempC + 0.348 * (rh / 100) * 6.105 * Math.exp(17.27 * tempC / (237.7 + tempC)) - 4.25;
+  }
+  return tempC;
 }
 
 // ── Colored route ────────────────────────────────────────────
@@ -375,11 +453,11 @@ function renderMarkers(results) {
 function renderTable(results) {
   const valid    = results.filter(r => r.wind);
   const avgSpeed = valid.reduce((s, r) => s + r.wind.speed, 0) / valid.length;
-  const maxSpeed = Math.max(...valid.map(r => r.wind.speed));
+  const maxGust  = Math.max(...valid.map(r => r.wind.gust ?? r.wind.speed));
   const maxHead  = Math.max(...valid.map(r => -headwind(r.wind.speed, r.wind.dir, r.bearing)));
 
   document.getElementById('wind-avg').textContent  = avgSpeed.toFixed(1) + ' m/s';
-  document.getElementById('wind-max').textContent  = maxSpeed.toFixed(1) + ' m/s';
+  document.getElementById('wind-max').textContent  = maxGust.toFixed(1) + ' m/s';
   document.getElementById('wind-head').textContent = maxHead > 0 ? maxHead.toFixed(1) + ' m/s' : 'none';
 
   const table = document.getElementById('wind-table');
@@ -393,13 +471,15 @@ function renderTable(results) {
     const hwText = hw > 0.5  ? `↗ ${hw.toFixed(1)} m/s tailwind` :
                    hw < -0.5 ? `↙ ${Math.abs(hw).toFixed(1)} m/s headwind` : '↔ crosswind';
     const hwCls  = hw > 0.5 ? 'tailwind' : hw < -0.5 ? 'headwind' : 'crosswind';
+    const tempStr = r.wind.tempC != null ? ` · ${Math.round(r.wind.tempC)}°C` : '';
+    const powStr  = r.power != null ? ` · ~${Math.round(r.power)}W` : '';
 
     const row = document.createElement('div');
     row.className = 'wind-row';
     row.innerHTML = `
       <div class="wind-arrow">${arrowSvg(dir, color, 30)}</div>
       <div class="wind-info">
-        <div class="km">${(r.distFromStart / 1000).toFixed(1)} km · ${compass(dir)}</div>
+        <div class="km">${(r.distFromStart / 1000).toFixed(1)} km · ${compass(dir)}${tempStr}${powStr}</div>
         <div class="condition ${hwCls}">${hwText}</div>
       </div>
       <div class="wind-speed">
@@ -607,13 +687,17 @@ function sampleRoute(pts, n) {
   const out      = [];
   let accumulated = 0, nextTarget = 0;
 
+  const interp = (a, b, t, key) =>
+    (a[key] != null && b[key] != null) ? a[key] + t * (b[key] - a[key]) : (a[key] ?? b[key] ?? null);
+
   for (let i = 1; i < pts.length && out.length < n; i++) {
     const seg = haversine(pts[i-1].lat, pts[i-1].lon, pts[i].lat, pts[i].lon);
     while (nextTarget <= accumulated + seg && out.length < n) {
       const t = seg > 0 ? (nextTarget - accumulated) / seg : 0;
       out.push({
-        lat:          pts[i-1].lat + t * (pts[i].lat - pts[i-1].lat),
-        lon:          pts[i-1].lon + t * (pts[i].lon - pts[i-1].lon),
+        lat:           pts[i-1].lat + t * (pts[i].lat - pts[i-1].lat),
+        lon:           pts[i-1].lon + t * (pts[i].lon - pts[i-1].lon),
+        ele:           interp(pts[i-1], pts[i], t, 'ele'),
         distFromStart: nextTarget,
       });
       nextTarget += interval;
@@ -623,7 +707,7 @@ function sampleRoute(pts, n) {
 
   if (out.length < n) {
     const last = pts[pts.length - 1];
-    out.push({ lat: last.lat, lon: last.lon, distFromStart: total });
+    out.push({ lat: last.lat, lon: last.lon, ele: last.ele, distFromStart: total });
   }
   return out.slice(0, n);
 }
@@ -663,6 +747,355 @@ function speedColor(ms) {
 function compass(deg) {
   const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
   return dirs[Math.round(deg / 22.5) % 16];
+}
+
+// ── Coach: power, TSS, calories, hydration ───────────────────
+function riderTotalMass() {
+  const rider = parseFloat(document.getElementById('rider-weight').value) || 75;
+  const bike  = parseFloat(document.getElementById('bike-weight').value) || 9;
+  return rider + bike;
+}
+
+function riderFTP() {
+  return parseFloat(document.getElementById('rider-ftp').value) || 220;
+}
+
+// Estimate watts to hold speedKmh given gradient (%) and headwind (m/s, +ve = into rider).
+function estimatePower(speedKmh, gradientPct, windHeadMs, mass) {
+  const v   = speedKmh / 3.6;
+  const g   = 9.81;
+  const rho = 1.225;
+  const crr = 0.005;
+  const cda = 0.4;
+  const eff = 0.97;            // drivetrain efficiency
+
+  const rolling = crr * mass * g * v;
+  const gravity = mass * g * (gradientPct / 100) * v;
+  const apparent = v + Math.max(-v, windHeadMs);
+  const air = 0.5 * rho * cda * apparent * apparent * Math.sign(apparent || 1) * v;
+  const total = (rolling + gravity + air) / eff;
+  return Math.max(0, total);
+}
+
+function renderCoachCard(results, totalDistM, speedKmh) {
+  const valid    = results.filter(r => r.power != null);
+  if (!valid.length) return;
+  const durHours = (totalDistM / 1000) / speedKmh;
+
+  // Distance-weighted average power
+  let powSum = 0, distSum = 0;
+  for (let i = 0; i < valid.length; i++) {
+    const next = valid[i + 1] ?? valid[i];
+    const segD = Math.max(1, next.distFromStart - valid[i].distFromStart);
+    powSum  += valid[i].power * segD;
+    distSum += segD;
+  }
+  const avgPower = powSum / distSum;
+
+  // Normalized Power (simplified): 4th-root of 4th-power mean
+  const np = Math.pow(
+    valid.reduce((s, r) => s + Math.pow(r.power, 4), 0) / valid.length, 0.25
+  );
+
+  const ftp = riderFTP();
+  const intensity = np / ftp;
+  const tss = durHours * intensity * intensity * 100;
+
+  // kJ → kcal (cycling efficiency ~24% → kJ ≈ kcal for the rider's metabolic output)
+  const kj   = avgPower * durHours * 3.6;
+  const kcal = Math.round(kj);
+
+  // Hydration: 600 ml/h baseline, +120 ml/h per 5°C above 20°C, +100 ml/h if intensity > 0.85
+  const avgTemp = valid.reduce((s, r) => s + (r.wind?.tempC ?? 18), 0) / valid.length;
+  const tempBoost = Math.max(0, (avgTemp - 20) / 5) * 120;
+  const intensityBoost = intensity > 0.85 ? 100 : 0;
+  const waterMlPerHr = 600 + tempBoost + intensityBoost;
+  const totalWaterL  = (waterMlPerHr * durHours) / 1000;
+
+  document.getElementById('coach-tss').textContent   = Math.round(tss);
+  document.getElementById('coach-power').textContent = Math.round(avgPower) + ' W';
+  document.getElementById('coach-kcal').textContent  = kcal + ' kcal';
+  document.getElementById('coach-water').textContent = totalWaterL.toFixed(1) + ' L';
+
+  // Fueling guidance
+  const intensityLabel =
+    intensity < 0.55 ? 'recovery'      :
+    intensity < 0.75 ? 'endurance (Z2)' :
+    intensity < 0.90 ? 'tempo (Z3)'    :
+    intensity < 1.05 ? 'threshold (Z4)' : 'VO₂max (Z5)';
+  const carbsPerHr = intensity < 0.6 ? 30 : intensity < 0.85 ? 60 : 90;
+  const fuelEveryKm = Math.max(10, Math.round((speedKmh * 0.5))); // every ~30 min
+  document.getElementById('coach-fuel').innerHTML =
+    `<strong>${intensityLabel}</strong> · IF ${intensity.toFixed(2)} · ` +
+    `target <strong>${carbsPerHr} g</strong> carbs/h, sip every <strong>${fuelEveryKm} km</strong>.`;
+}
+
+function renderWeatherSummary(results) {
+  const valid = results.filter(r => r.wind && r.wind.tempC != null);
+  if (!valid.length) return;
+  const avgT  = valid.reduce((s, r) => s + r.wind.tempC, 0) / valid.length;
+  const avgFL = valid.reduce((s, r) => s + (r.wind.feelsLikeC ?? r.wind.tempC), 0) / valid.length;
+  const maxPr = Math.max(0, ...valid.map(r => r.wind.precipMm || 0));
+  document.getElementById('weather-temp').textContent  = avgT.toFixed(0) + '°C';
+  document.getElementById('weather-feels').textContent = avgFL.toFixed(0) + '°C';
+  document.getElementById('weather-rain').textContent  = maxPr > 0.1 ? maxPr.toFixed(1) + ' mm' : 'dry';
+}
+
+// ── Departure time recommender ───────────────────────────────
+function exposureForStart(samples, startMs, totalDistM, speedKmh) {
+  const rideDurMs = (totalDistM / 1000 / speedKmh) * 3600 * 1000;
+  let headSum = 0, timeSum = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    if (!s.rawWind) continue;
+    const ms   = startMs + (s.distFromStart / totalDistM) * rideDurMs;
+    const w    = windAtTime(s.rawWind, ms);
+    const hw   = headwind(w.speed, w.dir, s.bearing);
+    const segD = Math.max(1, (samples[i+1]?.distFromStart ?? totalDistM) - (samples[i-1]?.distFromStart ?? 0)) / 2;
+    const segT = (segD / 1000 / speedKmh) * 3600;
+    headSum += Math.max(0, -hw) * segT;
+    timeSum += segT;
+  }
+  return timeSum ? headSum / timeSum : 0;  // avg headwind m/s over the ride
+}
+
+function renderDepartureRecommender(samples, totalDistM, speedKmh, baseTime) {
+  const baseMs = baseTime.getTime();
+  // Test candidate offsets: -4h .. +12h, every 2h
+  const offsets = [-4, -2, 0, 2, 4, 6, 8, 10, 12];
+  const now = Date.now();
+
+  const candidates = offsets
+    .map(h => ({ offsetH: h, startMs: baseMs + h * 3600 * 1000 }))
+    .filter(c => c.startMs > now - 3600 * 1000)   // skip well-past times
+    .map(c => ({ ...c, exposure: exposureForStart(samples, c.startMs, totalDistM, speedKmh) }));
+
+  if (!candidates.length) return;
+
+  const sorted   = [...candidates].sort((a, b) => a.exposure - b.exposure);
+  const best     = sorted[0];
+  const worst    = sorted[sorted.length - 1];
+  const baseline = candidates.find(c => c.offsetH === 0);
+  const maxExp   = Math.max(0.01, ...candidates.map(c => c.exposure));
+
+  // "best" summary
+  const bestDate = new Date(best.startMs);
+  const bestStr  = bestDate.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  let saving = '';
+  if (baseline && baseline.offsetH !== best.offsetH) {
+    const pct = ((baseline.exposure - best.exposure) / Math.max(baseline.exposure, 0.01)) * 100;
+    saving = pct > 5 ? ` — ${pct.toFixed(0)}% less headwind vs current` : '';
+  }
+  document.getElementById('departure-best').innerHTML =
+    `Optimal: <strong>${bestStr}</strong>${saving}`;
+
+  const list = document.getElementById('departure-list');
+  list.innerHTML = '';
+  for (const c of candidates) {
+    const d = new Date(c.startMs);
+    const timeStr = d.toLocaleString([], { hour: '2-digit', minute: '2-digit' });
+    const pct = (c.exposure / maxExp) * 100;
+    const row = document.createElement('div');
+    row.className = 'departure-row' +
+      (c === best ? ' best' : '') +
+      (c === worst ? ' worst' : '');
+    row.innerHTML = `
+      <span class="departure-time">${timeStr}</span>
+      <div class="departure-bar"><div class="departure-bar-fill" style="width:${pct.toFixed(0)}%"></div></div>
+      <span class="departure-hw">${c.exposure.toFixed(1)} m/s</span>`;
+    row.addEventListener('click', () => {
+      // Set this start time and re-analyze
+      const local = new Date(c.startMs - d.getTimezoneOffset() * 60000);
+      document.getElementById('ride-time').value = local.toISOString().slice(0, 16);
+      updateFinishTime();
+      analyzeWind(routePoints);
+    });
+    list.appendChild(row);
+  }
+}
+
+// ── Pacing strategy ──────────────────────────────────────────
+function renderPacingStrategy(results, climbs) {
+  const list = document.getElementById('pacing-list');
+  list.innerHTML = '';
+  const tips = [];
+
+  // Worst headwind run
+  const headwindRun = findRun(results, r => r.headwindMs != null && r.headwindMs < -2);
+  if (headwindRun && headwindRun.length >= 2) {
+    const startKm = (headwindRun[0].distFromStart / 1000).toFixed(0);
+    const endKm   = (headwindRun[headwindRun.length-1].distFromStart / 1000).toFixed(0);
+    const avgHw   = -headwindRun.reduce((s, r) => s + r.headwindMs, 0) / headwindRun.length;
+    tips.push({
+      cls: 'headwind',
+      html: `<strong>Save in headwind:</strong> km ${startKm}–${endKm}, avg ${avgHw.toFixed(1)} m/s into you. Drop to ~70–80% effort, tuck low.`,
+    });
+  }
+
+  // Best tailwind run
+  const tailRun = findRun(results, r => r.headwindMs != null && r.headwindMs > 2);
+  if (tailRun && tailRun.length >= 2) {
+    const startKm = (tailRun[0].distFromStart / 1000).toFixed(0);
+    const endKm   = (tailRun[tailRun.length-1].distFromStart / 1000).toFixed(0);
+    const avgTw   = tailRun.reduce((s, r) => s + r.headwindMs, 0) / tailRun.length;
+    tips.push({
+      cls: 'tailwind',
+      html: `<strong>Push tailwind:</strong> km ${startKm}–${endKm}, +${avgTw.toFixed(1)} m/s at your back. Add 5–10% power, free km/h.`,
+    });
+  }
+
+  // Climbs
+  if (climbs.length) {
+    const big = climbs.filter(c => c.category !== '4').slice(0, 2);
+    const list2 = (big.length ? big : climbs.slice(0, 2));
+    for (const c of list2) {
+      tips.push({
+        cls: 'climb',
+        html: `<strong>Climb @ km ${c.startKm.toFixed(0)}:</strong> ${c.lengthKm.toFixed(1)} km @ ${c.avgGrad.toFixed(1)}% (Cat ${c.category}). Pace ~Z3 for ${humanDuration((c.lengthKm / 12) * 3600)}.`,
+      });
+    }
+  }
+
+  // Weather warnings
+  const valid = results.filter(r => r.wind);
+  const maxGust = Math.max(...valid.map(r => r.wind.gust ?? r.wind.speed));
+  if (maxGust > 13) {
+    tips.push({
+      cls: '',
+      html: `<strong>Gusts up to ${maxGust.toFixed(0)} m/s</strong> — beware crosswind on exposed sections, watch echelons in groups.`,
+    });
+  }
+  const coldMin = Math.min(...valid.filter(r => r.wind.feelsLikeC != null).map(r => r.wind.feelsLikeC));
+  if (coldMin < 5) {
+    tips.push({
+      cls: '',
+      html: `<strong>Feels-like as low as ${coldMin.toFixed(0)}°C</strong> — pack a vest/gloves, especially for descents.`,
+    });
+  }
+  const totalRain = valid.reduce((s, r) => s + (r.wind.precipMm || 0), 0);
+  if (totalRain > 1) {
+    tips.push({
+      cls: '',
+      html: `<strong>Rain risk (${totalRain.toFixed(1)} mm)</strong> — fenders, tubeless, ride defensively in bends.`,
+    });
+  }
+
+  if (!tips.length) {
+    list.innerHTML = '<li>Conditions look benign — ride to plan.</li>';
+    return;
+  }
+
+  for (const t of tips) {
+    const li = document.createElement('li');
+    li.className = t.cls;
+    li.innerHTML = t.html;
+    list.appendChild(li);
+  }
+}
+
+function findRun(arr, predicate) {
+  let bestRun = null, bestSum = -Infinity;
+  let cur = [], curSum = 0;
+  for (const r of arr) {
+    if (predicate(r)) {
+      cur.push(r);
+      curSum += Math.abs(r.headwindMs);
+    } else {
+      if (curSum > bestSum) { bestRun = cur; bestSum = curSum; }
+      cur = []; curSum = 0;
+    }
+  }
+  if (curSum > bestSum) bestRun = cur;
+  return bestRun;
+}
+
+function humanDuration(seconds) {
+  const m = Math.round(seconds / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), mm = m % 60;
+  return `${h}h ${mm.toString().padStart(2,'0')}m`;
+}
+
+// ── Climb detection ──────────────────────────────────────────
+function detectClimbs(pts, dists) {
+  const MIN_GRAD = 3;     // %
+  const MIN_LEN  = 500;   // m
+  const MIN_GAIN = 30;    // m
+  const SMOOTH   = 300;   // m smoothing window
+
+  const grads = [];
+  for (let i = 0; i < pts.length; i++) {
+    let lo = i, hi = i;
+    while (lo > 0 && dists[i] - dists[lo - 1] < SMOOTH / 2) lo--;
+    while (hi < pts.length - 1 && dists[hi + 1] - dists[i] < SMOOTH / 2) hi++;
+    if (pts[lo].ele == null || pts[hi].ele == null || dists[hi] - dists[lo] < 50) {
+      grads.push(0); continue;
+    }
+    grads.push((pts[hi].ele - pts[lo].ele) / (dists[hi] - dists[lo]) * 100);
+  }
+
+  const climbs = [];
+  let startIdx = -1;
+  for (let i = 0; i < pts.length; i++) {
+    if (grads[i] >= MIN_GRAD) {
+      if (startIdx === -1) startIdx = i;
+    } else if (startIdx !== -1) {
+      const endIdx = i - 1;
+      const len    = dists[endIdx] - dists[startIdx];
+      const dEle   = (pts[endIdx].ele ?? 0) - (pts[startIdx].ele ?? 0);
+      if (len >= MIN_LEN && dEle >= MIN_GAIN) {
+        const avgGrad = (dEle / len) * 100;
+        const points  = (len / 1000) * avgGrad;
+        climbs.push({
+          startIdx, endIdx,
+          startKm:  dists[startIdx] / 1000,
+          endKm:    dists[endIdx]   / 1000,
+          lengthKm: len / 1000,
+          ascent:   dEle,
+          avgGrad,
+          category: climbCategory(points),
+          lat: pts[startIdx].lat,
+          lon: pts[startIdx].lon,
+        });
+      }
+      startIdx = -1;
+    }
+  }
+  return climbs;
+}
+
+function climbCategory(points) {
+  if (points >= 50) return 'HC';
+  if (points >= 25) return '1';
+  if (points >= 12) return '2';
+  if (points >=  6) return '3';
+  return '4';
+}
+
+function renderClimbs(climbs) {
+  const section = document.getElementById('climbs-section');
+  const list    = document.getElementById('climbs-list');
+  list.innerHTML = '';
+  if (!climbs.length) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  for (const c of climbs) {
+    const catClass = c.category === 'HC' ? 'hc' : 'cat' + c.category;
+    const row = document.createElement('div');
+    row.className = 'climb-row';
+    row.innerHTML = `
+      <div class="climb-cat ${catClass}">${c.category}</div>
+      <div class="climb-info">
+        <div class="climb-info-km">km ${c.startKm.toFixed(0)}</div>
+        <div class="climb-info-stats">${c.lengthKm.toFixed(1)} km · ↑${Math.round(c.ascent)} m</div>
+      </div>
+      <div class="climb-gradient">${c.avgGrad.toFixed(1)}%</div>`;
+    row.addEventListener('click', () => {
+      switchTab('wind');
+      map.setView([c.lat, c.lon], 14);
+    });
+    list.appendChild(row);
+  }
 }
 
 // ── UI helpers ────────────────────────────────────────────────

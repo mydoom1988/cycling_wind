@@ -566,3 +566,151 @@ input:focus { border-color: var(--accent); }
 .popup-time { font-size: 11px; color: var(--text-muted); margin-top: 6px; border-top: 1px solid var(--border); padding-top: 6px; }
 
 .hidden { display: none !important; }
+
+/* Rider profile (collapsible) */
+.rider-details { margin-top: 4px; }
+.rider-details summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 0;
+  user-select: none;
+}
+.rider-details summary:hover { color: var(--accent); }
+.rider-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.rider-grid > div:last-child { grid-column: 1 / -1; }
+
+/* Route action icons */
+.route-actions { display: flex; gap: 4px; }
+.btn-icon {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 5px 7px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-icon:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Coach card */
+.coach-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.coach-item {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.coach-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.coach-value { font-size: 15px; font-weight: 700; color: var(--text); }
+.coach-fuel {
+  font-size: 11px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  line-height: 1.5;
+}
+.coach-fuel strong { color: var(--text); }
+
+/* Departure recommender */
+#departure-best { font-size: 13px; color: var(--text); margin-bottom: 2px; }
+#departure-best strong { color: var(--accent); }
+#departure-list { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+.departure-row {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.departure-row.best { border-color: #16a34a; background: rgba(22,163,74,0.08); }
+.departure-time { font-weight: 700; color: var(--text); }
+.departure-bar {
+  height: 6px;
+  background: var(--surface2);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+.departure-bar-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+.departure-row.best .departure-bar-fill { background: #16a34a; }
+.departure-row.worst .departure-bar-fill { background: #dc2626; }
+.departure-hw { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+
+/* Pacing strategy */
+.pacing-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.pacing-list li {
+  background: var(--bg);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 7px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.pacing-list li.tailwind { border-left-color: #16a34a; }
+.pacing-list li.headwind { border-left-color: #dc2626; }
+.pacing-list li.climb    { border-left-color: #f97316; }
+.pacing-list li strong   { color: var(--accent); }
+
+/* Climbs */
+#climbs-list { display: flex; flex-direction: column; gap: 5px; }
+.climb-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.climb-row:hover { border-color: var(--accent); background: var(--surface2); }
+.climb-cat {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+  padding: 3px 0;
+  white-space: nowrap;
+}
+.climb-cat.hc   { background: #7c3aed; }
+.climb-cat.cat1 { background: #dc2626; }
+.climb-cat.cat2 { background: #ea580c; }
+.climb-cat.cat3 { background: #d97706; }
+.climb-cat.cat4 { background: #65a30d; }
+.climb-info-km    { font-size: 11px; color: var(--text-muted); }
+.climb-info-stats { font-size: 12px; font-weight: 600; color: var(--text); margin-top: 1px; }
+.climb-gradient { font-size: 14px; font-weight: 700; text-align: right; color: var(--text); }
+
+/* Weather row in summary (already 3-col, override to 3-col wrapping nicely) */
+.wind-summary-card { grid-template-columns: repeat(3, 1fr) !important; }
