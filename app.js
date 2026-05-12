@@ -138,6 +138,10 @@ function handleFile(file) {
       requestAnimationFrame(() => {
         map.invalidateSize();
         map.fitBounds(L.polyline(pts.map(p => [p.lat, p.lon])).getBounds(), { padding: [50, 50] });
+        // On mobile, scroll the map into view so user sees the result
+        if (window.matchMedia('(max-width: 768px)').matches) {
+          document.getElementById('main').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
       });
     } catch (err) {
       showToast('Failed to parse GPX: ' + err.message, 'error');

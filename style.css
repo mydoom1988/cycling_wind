@@ -714,3 +714,84 @@ input:focus { border-color: var(--accent); }
 
 /* Weather row in summary (already 3-col, override to 3-col wrapping nicely) */
 .wind-summary-card { grid-template-columns: repeat(3, 1fr) !important; }
+
+/* ── Mobile: stack vertically ─────────────────────────────── */
+@media (max-width: 768px) {
+  body {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  /* Sidebar full-width, no fixed height */
+  #sidebar {
+    width: 100%;
+    min-width: 0;
+    max-height: none;
+    overflow-y: visible;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 12px;
+  }
+
+  /* Main panel below — fixed viewport-relative height */
+  #main {
+    width: 100%;
+    height: 75vh;
+    min-height: 480px;
+    flex: 0 0 auto;
+  }
+
+  /* Tab bar slightly smaller */
+  #tab-bar { padding: 4px 6px; height: 38px; }
+  .tab-btn { padding: 4px 10px; font-size: 12px; }
+
+  /* Bigger touch targets on inputs */
+  input[type="datetime-local"],
+  input[type="number"] {
+    font-size: 16px;   /* iOS won't zoom on focus */
+    padding: 9px 10px;
+  }
+
+  /* Cards a bit tighter */
+  .card { padding: 11px; gap: 7px; }
+
+  /* Legend: smaller, anchored to top-right so it doesn't cover map zoom controls */
+  #legend {
+    bottom: auto;
+    top: 8px;
+    right: 8px;
+    padding: 7px 9px;
+    font-size: 10px;
+  }
+  #legend.elev-collapsed { top: 8px; bottom: auto; }
+  #legend.elev-hidden    { top: 8px; bottom: auto; }
+  .legend-title { font-size: 9px; margin-bottom: 4px; }
+  .legend-item  { font-size: 10px; margin-bottom: 2px; }
+  .legend-sep   { margin: 4px 0; }
+
+  /* Elevation panel a touch shorter */
+  #elevation-svg { height: 80px; }
+
+  /* Wind table rows full-width */
+  .wind-row { padding: 9px 11px; }
+
+  /* Hide brand subtitle on mobile to save space */
+  .brand p { display: none; }
+  .brand   { padding-bottom: 10px; margin-bottom: 0; }
+
+  /* Draw landing simpler on mobile */
+  #draw-landing { padding: 20px 14px; }
+  .draw-hero    { padding: 24px 18px; }
+  .draw-hero h2 { font-size: 19px; }
+  .draw-hero-icon { font-size: 42px; }
+}
+
+/* Very narrow phones */
+@media (max-width: 380px) {
+  .coach-grid { grid-template-columns: 1fr; }
+  .wind-summary-card { grid-template-columns: repeat(2, 1fr) !important; }
+  .rider-grid { grid-template-columns: 1fr; }
+}
