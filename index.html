@@ -255,7 +255,18 @@
 
   <div id="toast" class="hidden"></div>
 
+  <div id="build-info"></div>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="app.js"></script>
+  <script>
+    fetch('/build-info').then(r => r.json()).then(info => {
+      if (info.buildTime) {
+        const d = new Date(info.buildTime);
+        document.getElementById('build-info').textContent =
+          'Build: ' + d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+      }
+    }).catch(() => {});
+  </script>
 </body>
 </html>

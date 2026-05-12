@@ -789,6 +789,17 @@ input:focus { border-color: var(--accent); }
   .draw-hero-icon { font-size: 42px; }
 }
 
+#build-info {
+  position: fixed;
+  bottom: 6px;
+  right: 10px;
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 999;
+}
+
 /* Very narrow phones */
 @media (max-width: 380px) {
   .coach-grid { grid-template-columns: 1fr; }

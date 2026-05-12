@@ -22,8 +22,23 @@ http.createServer((req, res) => {
   }
 
   const urlPath = req.url.split('?')[0];
-  const file    = urlPath === '/' ? '/index.html' : urlPath;
-  const full    = path.join(__dirname, file);
+
+  if (urlPath === '/build-info') {
+    const infoPath = path.join(__dirname, 'build-info.json');
+    fs.readFile(infoPath, (err, data) => {
+      if (err) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'No build info available' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(data);
+    });
+    return;
+  }
+
+  const file = urlPath === '/' ? '/index.html' : urlPath;
+  const full = path.join(__dirname, file);
 
   fs.readFile(full, (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }

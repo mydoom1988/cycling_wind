@@ -4,7 +4,8 @@
   "description": "Wind analysis for cycling routes",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "build": "node -e \"require('fs').writeFileSync('build-info.json', JSON.stringify({buildTime: new Date().toISOString()}, null, 2))\""
   },
   "engines": {
     "node": ">=18"
