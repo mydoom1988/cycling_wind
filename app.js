@@ -179,7 +179,7 @@ function updateFinishTime(distOrEvent) {
   const dist  = typeof distOrEvent === 'number' ? distOrEvent
               : (routeDistances.length ? routeDistances[routeDistances.length - 1] : 0);
   if (!dist) return;
-  const speed  = parseFloat(document.getElementById('ride-speed').value) || 20;
+  const speed  = parseFloat(document.getElementById('ride-speed').value) || 26;
   const hrs    = dist / 1000 / speed;
   const h      = Math.floor(hrs);
   const m      = Math.round((hrs - h) * 60);
@@ -202,7 +202,7 @@ async function analyzeWind(pts) {
   const rideTime = new Date(document.getElementById('ride-time').value);
   if (isNaN(rideTime)) { showToast('Set a ride start time first', 'error'); return; }
 
-  const speed      = parseFloat(document.getElementById('ride-speed').value) || 20;
+  const speed      = parseFloat(document.getElementById('ride-speed').value) || 26;
   const totalDist  = totalDistance(pts);
   const rideDurMs  = (totalDist / 1000 / speed) * 3600 * 1000;
 
