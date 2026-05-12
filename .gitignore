@@ -1,0 +1,9 @@
+node_modules/
+gpx.studio/
+*.pfx
+*.pem
+*.key
+*.cer
+.env
+.DS_Store
+Thumbs.db

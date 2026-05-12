@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Route Wind Analyzer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="sidebar">
+    <div class="brand">
+      <div class="brand-icon">🌬️</div>
+      <div>
+        <h1>Route Wind</h1>
+        <p>Wind analysis for cyclists</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <label class="field-label">Ride Settings</label>
+      <div>
+        <label class="sub-label">Start time</label>
+        <input type="datetime-local" id="ride-time" />
+      </div>
+      <div>
+        <label class="sub-label">Avg speed</label>
+        <div class="unit-input">
+          <input type="number" id="ride-speed" value="20" min="5" max="60" />
+          <span class="unit-badge">km/h</span>
+        </div>
+      </div>
+      <div>
+        <label class="sub-label">Est. finish time</label>
+        <div id="finish-time" class="finish-time-display">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <label class="field-label">GPX Route File</label>
+      <p class="helper-text">Draw your route in the <strong>Draw</strong> tab, export it as GPX, then drop it here.</p>
+      <div class="upload-zone" id="upload-zone">
+        <input type="file" id="file-input" accept=".gpx" hidden />
+        <div class="upload-content">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <span>Drop GPX here or click</span>
+        </div>
+      </div>
+      <div id="file-name" class="file-name hidden"></div>
+    </div>
+
+    <div id="route-info" class="card hidden">
+      <div class="card-header">
+        <h3>Route</h3>
+        <button id="download-btn" class="btn-wahoo" title="Download GPX">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Download
+        </button>
+      </div>
+      <div class="stats-row">
+        <div class="stat">
+          <span class="stat-value" id="stat-distance">—</span>
+          <span class="stat-label">km</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-elevation">—</span>
+          <span class="stat-label">m gain</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-duration" style="font-size:13px">—</span>
+          <span class="stat-label">duration</span>
+        </div>
+      </div>
+      <button id="analyze-btn" class="btn-primary">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
+        </svg>
+        Analyze Wind
+      </button>
+    </div>
+
+    <div id="wind-section" class="hidden">
+      <div id="wind-summary" class="card wind-summary-card">
+        <div class="summary-item">
+          <span class="summary-label">Avg wind</span>
+          <span id="wind-avg" class="summary-value">—</span>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">Max wind</span>
+          <span id="wind-max" class="summary-value">—</span>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">Headwind</span>
+          <span id="wind-head" class="summary-value">—</span>
+        </div>
+      </div>
+      <div class="section-header">
+        <span class="section-title">Wind Along Route</span>
+      </div>
+      <div id="wind-table"></div>
+    </div>
+  </div>
+
+  <!-- Main panel with tabs -->
+  <div id="main">
+    <div id="tab-bar">
+      <button class="tab-btn active" data-tab="draw">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+        </svg>
+        Draw Route
+      </button>
+      <button class="tab-btn" data-tab="wind">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9.59 4.59A2 2 0 1111 8H2m10.59 11.41A2 2 0 1014 16H2m15.73-8.27A2.5 2.5 0 1119.5 12H2"/>
+        </svg>
+        Wind Analysis
+      </button>
+    </div>
+
+    <!-- Draw tab: link out to gpx.studio -->
+    <div id="tab-draw" class="tab-pane active">
+      <div id="draw-landing">
+        <div class="draw-hero">
+          <div class="draw-hero-icon">🗺️</div>
+          <h2>Build your route</h2>
+          <p>Draw a cycling route on <strong>gpx.studio</strong>, export it as GPX, then drop the file into the sidebar to see wind analysis along the way.</p>
+          <a href="https://gpx.studio" target="_blank" rel="noopener" class="btn-primary draw-hero-btn">
+            Open route editor →
+          </a>
+          <ol class="draw-steps">
+            <li>Open the route editor (new tab)</li>
+            <li>Draw your route, then <strong>Export → GPX</strong></li>
+            <li>Come back here and drop the GPX in the sidebar</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <!-- Wind tab: Leaflet map -->
+    <div id="tab-wind" class="tab-pane hidden">
+      <div id="map"></div>
+      <div id="elevation-panel" class="hidden">
+        <div id="elevation-header">
+          <span id="elevation-stats"></span>
+          <button id="elevation-toggle" title="Toggle elevation profile">▾</button>
+        </div>
+        <svg id="elevation-svg" preserveAspectRatio="none"></svg>
+      </div>
+      <div id="legend">
+        <div class="legend-title">Route — Wind Component</div>
+        <div class="legend-item"><span class="dot" style="background:#16a34a"></span>Strong tailwind</div>
+        <div class="legend-item"><span class="dot" style="background:#86efac"></span>Tailwind</div>
+        <div class="legend-item"><span class="dot" style="background:#fbbf24"></span>Crosswind</div>
+        <div class="legend-item"><span class="dot" style="background:#f97316"></span>Headwind</div>
+        <div class="legend-item"><span class="dot" style="background:#dc2626"></span>Strong headwind</div>
+        <div class="legend-item" style="margin-top:4px">
+          <svg width="14" height="14" viewBox="-7 -7 14 14"><path d="M0,-4 L3,3 L0,1 L-3,3 Z" fill="#fff" stroke="#0f172a" stroke-width="1.3" stroke-linejoin="round"/></svg>
+          <span style="margin-left:1px">Travel direction</span>
+        </div>
+        <div class="legend-sep"></div>
+        <div class="legend-title">Wind Arrows</div>
+        <div class="legend-item"><span class="dot" style="background:#4CAF50"></span>0–3 m/s</div>
+        <div class="legend-item"><span class="dot" style="background:#FFC107"></span>3–7 m/s</div>
+        <div class="legend-item"><span class="dot" style="background:#FF9800"></span>7–12 m/s</div>
+        <div class="legend-item"><span class="dot" style="background:#F44336"></span>12–18 m/s</div>
+        <div class="legend-item"><span class="dot" style="background:#9C27B0"></span>18+ m/s</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="loading" class="hidden">
+    <div class="loading-inner">
+      <div class="spinner"></div>
+      <div id="loading-text">Fetching wind data…</div>
+      <div id="loading-bar-wrap"><div id="loading-bar"></div></div>
+    </div>
+  </div>
+
+  <div id="toast" class="hidden"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
