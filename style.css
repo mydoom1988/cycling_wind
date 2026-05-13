@@ -257,6 +257,8 @@ input:focus { border-color: var(--accent); }
 }
 
 .section-header { display: flex; align-items: center; justify-content: space-between; padding: 0 2px; }
+.section-header.collapsible { cursor: pointer; user-select: none; padding: 4px 2px; }
+.section-header.collapsible:hover .section-title { color: var(--accent); }
 .section-title {
   font-size: 11px;
   font-weight: 600;
@@ -264,6 +266,18 @@ input:focus { border-color: var(--accent); }
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
+.section-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  line-height: 1;
+  transition: transform 0.2s;
+}
+.section-toggle.collapsed { transform: rotate(-90deg); }
+#wind-table.collapsed { display: none; }
 
 #wind-table { display: flex; flex-direction: column; gap: 4px; }
 
@@ -478,6 +492,22 @@ input:focus { border-color: var(--accent); }
 }
 #legend.elev-collapsed { bottom: 45px; }
 #legend.elev-hidden    { bottom: 30px; }
+.legend-mobile-btn {
+  display: none;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.95);
+  color: #333;
+  font-size: 16px;
+  font-weight: 700;
+  font-style: italic;
+  font-family: serif;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+.legend-body { display: block; }
 .legend-title {
   font-size: 10px;
   font-weight: 700;
@@ -758,16 +788,27 @@ input:focus { border-color: var(--accent); }
   /* Cards a bit tighter */
   .card { padding: 11px; gap: 7px; }
 
-  /* Legend: smaller, anchored to top-right so it doesn't cover map zoom controls */
+  /* Legend: collapsed to a small "i" button on mobile, tap to expand */
   #legend {
     bottom: auto;
     top: 8px;
     right: 8px;
-    padding: 7px 9px;
-    font-size: 10px;
+    padding: 0;
+    background: transparent;
+    border: none;
   }
-  #legend.elev-collapsed { top: 8px; bottom: auto; }
-  #legend.elev-hidden    { top: 8px; bottom: auto; }
+  #legend.elev-collapsed,
+  #legend.elev-hidden { top: 8px; bottom: auto; }
+  .legend-mobile-btn { display: block; }
+  .legend-body { display: none; }
+  #legend.expanded {
+    padding: 9px 11px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #ccc;
+    border-radius: var(--radius);
+  }
+  #legend.expanded .legend-mobile-btn { display: none; }
+  #legend.expanded .legend-body { display: block; }
   .legend-title { font-size: 9px; margin-bottom: 4px; }
   .legend-item  { font-size: 10px; margin-bottom: 2px; }
   .legend-sep   { margin: 4px 0; }

@@ -15,6 +15,7 @@ let rawGpx         = '';
 let rawGpxName     = '';
 let lastResults    = [];   // sampled points with wind+weather, cached
 let lastClimbs     = [];   // detected climbs on current route
+let velocityLayer  = null; // live wind particles overlay
 
 // ── Bootstrap ────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -80,6 +81,23 @@ function initUI() {
   document.getElementById('ride-time').addEventListener('input', updateFinishTime);
   document.getElementById('download-btn').addEventListener('click', downloadGpx);
   document.getElementById('reverse-btn').addEventListener('click', reverseRoute);
+
+  // Wind-table collapse
+  const toggleTable = () => {
+    document.getElementById('wind-table').classList.toggle('collapsed');
+    document.getElementById('wind-table-toggle').classList.toggle('collapsed');
+  };
+  document.getElementById('wind-table-header').addEventListener('click', toggleTable);
+
+  // Mobile legend "i" expander
+  document.getElementById('legend-mobile-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    document.getElementById('legend').classList.add('expanded');
+  });
+  document.addEventListener('click', e => {
+    const legend = document.getElementById('legend');
+    if (!legend.contains(e.target)) legend.classList.remove('expanded');
+  });
 
   // Persist rider profile
   ['rider-weight', 'bike-weight', 'rider-ftp'].forEach(id => {
@@ -169,6 +187,7 @@ function parseGPX(xml) {
 function displayRoute(pts) {
   routeLayer.clearLayers();
   markersLayer.clearLayers();
+  if (velocityLayer) { map.removeLayer(velocityLayer); velocityLayer = null; }
 
   windRouteLayer.clearLayers();
 
@@ -291,13 +310,103 @@ async function analyzeWind(pts) {
 
   lastResults = results;
   renderColoredRoute(results, pts);
-  renderMarkers(results);
   renderTable(results);
   renderCoachCard(results, totalDist, speed);
   renderWeatherSummary(results);
   renderDepartureRecommender(results, totalDist, speed, rideTime);
   renderPacingStrategy(results, lastClimbs);
+  renderWindOverlay(pts, rideTime);
   showToast(`Wind & weather loaded for ${valid.length} points`, 'success');
+}
+
+// ── Live wind overlay (animated particles via leaflet-velocity) ─
+async function renderWindOverlay(pts, atTime) {
+  if (!window.L || !L.velocityLayer) return;
+  try {
+    const bounds = L.latLngBounds(pts.map(p => [p.lat, p.lon]));
+    const data = await loadWindGrid(bounds, atTime);
+    if (velocityLayer) { map.removeLayer(velocityLayer); velocityLayer = null; }
+    velocityLayer = L.velocityLayer({
+      displayValues: false,
+      data,
+      maxVelocity: 18,
+      velocityScale: 0.012,
+      particleAge: 90,
+      lineWidth: 1.3,
+      particleMultiplier: 0.0045,
+      colorScale: [
+        'rgba(255,255,255,0.85)',
+        'rgba(186,230,253,0.9)',
+        'rgba(96,165,250,0.9)',
+        'rgba(251,191,36,0.95)',
+        'rgba(239,68,68,1)',
+      ],
+    });
+    velocityLayer.addTo(map);
+  } catch (e) {
+    console.warn('Live wind overlay failed:', e.message);
+  }
+}
+
+async function loadWindGrid(bounds, atTime) {
+  const COLS = 14;
+  const ROWS = 9;
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+  const padLat = Math.max(0.05, (ne.lat - sw.lat) * 0.12);
+  const padLon = Math.max(0.05, (ne.lng - sw.lng) * 0.12);
+  const minLat = sw.lat - padLat, maxLat = ne.lat + padLat;
+  const minLon = sw.lng - padLon, maxLon = ne.lng + padLon;
+  const dx = (maxLon - minLon) / (COLS - 1);
+  const dy = (maxLat - minLat) / (ROWS - 1);
+
+  const lats = [], lons = [];
+  // Row-major, top → bottom, left → right
+  for (let i = 0; i < ROWS; i++) {
+    for (let j = 0; j < COLS; j++) {
+      lats.push((maxLat - i * dy).toFixed(4));
+      lons.push((minLon + j * dx).toFixed(4));
+    }
+  }
+
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lats.join(',')}&longitude=${lons.join(',')}` +
+              `&hourly=wind_speed_10m,wind_direction_10m&forecast_days=3&timezone=UTC&wind_speed_unit=ms`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Open-Meteo ${res.status}`);
+  const json = await res.json();
+  const points = Array.isArray(json) ? json : [json];
+
+  // Find target hour index in first point's time series
+  const times    = points[0].hourly.time;
+  const targetH  = new Date(atTime); targetH.setMinutes(0,0,0);
+  const targetIso = targetH.toISOString().slice(0, 13);
+  let idx = times.findIndex(t => t.startsWith(targetIso));
+  if (idx < 0) idx = 0;
+
+  const us = [], vs = [];
+  for (const p of points) {
+    const s = p.hourly.wind_speed_10m[idx];
+    const d = p.hourly.wind_direction_10m[idx];
+    if (s == null || d == null) { us.push(0); vs.push(0); continue; }
+    const r = d * Math.PI / 180;          // d = direction FROM (meteorological)
+    us.push(-s * Math.sin(r));
+    vs.push(-s * Math.cos(r));
+  }
+
+  const refTime = new Date(targetIso + ':00:00Z').toISOString();
+  const headerBase = {
+    parameterCategory: 2,
+    parameterUnit:     'm/s',
+    nx: COLS, ny: ROWS,
+    lo1: minLon, la1: maxLat,
+    lo2: maxLon, la2: minLat,
+    dx, dy,
+    refTime,
+  };
+  return [
+    { header: { ...headerBase, parameterNumber: 2, parameterNumberName: 'eastward_wind'  }, data: us },
+    { header: { ...headerBase, parameterNumber: 3, parameterNumberName: 'northward_wind' }, data: vs },
+  ];
 }
 
 async function fetchWind(lat, lon) {
@@ -398,19 +507,6 @@ function renderColoredRoute(results, pts) {
     segLL.push([results[i + 1].lat, results[i + 1].lon]);
 
     L.polyline(segLL, { color, weight: 5, opacity: 0.9, lineJoin: 'round' }).addTo(windRouteLayer);
-
-    // Direction-of-travel chevron at the sample point
-    const chevron = L.divIcon({
-      html: `<svg width="16" height="16" viewBox="-8 -8 16 16">
-               <g transform="rotate(${r.bearing})">
-                 <path d="M0,-5 L4,4 L0,1.5 L-4,4 Z" fill="#fff" stroke="#0f172a" stroke-width="1.4" stroke-linejoin="round"/>
-               </g>
-             </svg>`,
-      className: '',
-      iconSize:   [16, 16],
-      iconAnchor: [8, 8],
-    });
-    L.marker([r.lat, r.lon], { icon: chevron, interactive: false, zIndexOffset: 400 }).addTo(windRouteLayer);
   }
 
   // Re-add endpoints on top
