@@ -639,7 +639,7 @@ input:focus { border-color: var(--accent); }
 #departure-list { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
 .departure-row {
   display: grid;
-  grid-template-columns: 56px 1fr auto;
+  grid-template-columns: 82px 1fr auto;
   gap: 8px;
   align-items: center;
   background: var(--bg);

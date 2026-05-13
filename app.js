@@ -863,52 +863,96 @@ function exposureForStart(samples, startMs, totalDistM, speedKmh) {
   return timeSum ? headSum / timeSum : 0;  // avg headwind m/s over the ride
 }
 
+// Allowed riding windows (local time):
+//   Weekday (Mon-Fri): 16:00 start window, must finish by 20:00
+//   Weekend (Sat/Sun): 05:00 start window, must finish by 20:00
+function rideWindowFor(date) {
+  const dow = date.getDay();              // 0 Sun … 6 Sat
+  const isWeekend = dow === 0 || dow === 6;
+  return { startHour: isWeekend ? 5 : 16, endHour: 20 };
+}
+
+function isValidRideStart(startMs, rideDurMs) {
+  const start = new Date(startMs);
+  const { startHour, endHour } = rideWindowFor(start);
+  const dayStart = new Date(start); dayStart.setHours(startHour, 0, 0, 0);
+  const dayEnd   = new Date(start); dayEnd.setHours(endHour,   0, 0, 0);
+  return startMs >= dayStart.getTime() && (startMs + rideDurMs) <= dayEnd.getTime();
+}
+
 function renderDepartureRecommender(samples, totalDistM, speedKmh, baseTime) {
-  const baseMs = baseTime.getTime();
-  // Test candidate offsets: -4h .. +12h, every 2h
-  const offsets = [-4, -2, 0, 2, 4, 6, 8, 10, 12];
-  const now = Date.now();
+  const rideDurMs = (totalDistM / 1000 / speedKmh) * 3600 * 1000;
 
-  const candidates = offsets
-    .map(h => ({ offsetH: h, startMs: baseMs + h * 3600 * 1000 }))
-    .filter(c => c.startMs > now - 3600 * 1000)   // skip well-past times
-    .map(c => ({ ...c, exposure: exposureForStart(samples, c.startMs, totalDistM, speedKmh) }));
+  // Build candidate pool: every hour for the next 5 days, starting from "now".
+  // Always include the user's current selection too (even if outside the window)
+  // so we can compute the "vs current" saving message.
+  const nowDate = new Date();
+  nowDate.setMinutes(0, 0, 0);
+  nowDate.setHours(nowDate.getHours() + 1);          // next full hour
+  const searchStart = nowDate.getTime();
 
-  if (!candidates.length) return;
-
-  const sorted   = [...candidates].sort((a, b) => a.exposure - b.exposure);
-  const best     = sorted[0];
-  const worst    = sorted[sorted.length - 1];
-  const baseline = candidates.find(c => c.offsetH === 0);
-  const maxExp   = Math.max(0.01, ...candidates.map(c => c.exposure));
-
-  // "best" summary
-  const bestDate = new Date(best.startMs);
-  const bestStr  = bestDate.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-  let saving = '';
-  if (baseline && baseline.offsetH !== best.offsetH) {
-    const pct = ((baseline.exposure - best.exposure) / Math.max(baseline.exposure, 0.01)) * 100;
-    saving = pct > 5 ? ` — ${pct.toFixed(0)}% less headwind vs current` : '';
+  const pool = [];
+  for (let h = 0; h < 5 * 24; h++) {
+    pool.push(searchStart + h * 3600 * 1000);
   }
-  document.getElementById('departure-best').innerHTML =
-    `Optimal: <strong>${bestStr}</strong>${saving}`;
 
-  const list = document.getElementById('departure-list');
+  const validMs = pool.filter(ms => isValidRideStart(ms, rideDurMs));
+  const candidates = validMs.map(ms => ({
+    startMs:  ms,
+    exposure: exposureForStart(samples, ms, totalDistM, speedKmh),
+  }));
+
+  const bestLine = document.getElementById('departure-best');
+  const list     = document.getElementById('departure-list');
   list.innerHTML = '';
-  for (const c of candidates) {
-    const d = new Date(c.startMs);
-    const timeStr = d.toLocaleString([], { hour: '2-digit', minute: '2-digit' });
+
+  if (!candidates.length) {
+    bestLine.innerHTML =
+      'No valid start fits — ride too long for the 16:00–20:00 weekday window. ' +
+      'Try a weekend or split the ride.';
+    return;
+  }
+
+  const sorted = [...candidates].sort((a, b) => a.exposure - b.exposure);
+  const best   = sorted[0];
+  const worst  = sorted[sorted.length - 1];
+  const maxExp = Math.max(0.01, ...candidates.map(c => c.exposure));
+
+  const bestDate = new Date(best.startMs);
+  const bestStr  = bestDate.toLocaleString([], {
+    weekday: 'short', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+
+  // Compare against the user's currently-set ride time if available
+  const currentMs   = baseTime.getTime();
+  const currentExp  = exposureForStart(samples, currentMs, totalDistM, speedKmh);
+  const currentValid = isValidRideStart(currentMs, rideDurMs);
+  let saving = '';
+  if (currentValid && currentMs !== best.startMs) {
+    const pct = ((currentExp - best.exposure) / Math.max(currentExp, 0.01)) * 100;
+    if (pct > 5) saving = ` — ${pct.toFixed(0)}% less headwind vs current`;
+  }
+  bestLine.innerHTML = `Optimal: <strong>${bestStr}</strong>${saving}`;
+
+  // Show up to 10 candidates, chronologically, preferring those near "best"
+  const limited = candidates.slice(0, 10);
+
+  for (const c of limited) {
+    const d   = new Date(c.startMs);
     const pct = (c.exposure / maxExp) * 100;
+    const label = d.toLocaleString([], {
+      weekday: 'short', hour: '2-digit', minute: '2-digit',
+    });
     const row = document.createElement('div');
     row.className = 'departure-row' +
-      (c === best ? ' best' : '') +
-      (c === worst ? ' worst' : '');
+      (c.startMs === best.startMs ? ' best' : '') +
+      (c.startMs === worst.startMs ? ' worst' : '');
     row.innerHTML = `
-      <span class="departure-time">${timeStr}</span>
+      <span class="departure-time">${label}</span>
       <div class="departure-bar"><div class="departure-bar-fill" style="width:${pct.toFixed(0)}%"></div></div>
       <span class="departure-hw">${c.exposure.toFixed(1)} m/s</span>`;
     row.addEventListener('click', () => {
-      // Set this start time and re-analyze
       const local = new Date(c.startMs - d.getTimezoneOffset() * 60000);
       document.getElementById('ride-time').value = local.toISOString().slice(0, 16);
       updateFinishTime();
