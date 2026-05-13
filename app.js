@@ -321,7 +321,11 @@ async function analyzeWind(pts) {
 
 // ── Live wind overlay (animated particles via leaflet-velocity) ─
 async function renderWindOverlay(pts, atTime) {
-  if (!window.L || !L.velocityLayer) return;
+  if (!window.L || !L.velocityLayer) {
+    console.warn('leaflet-velocity not loaded');
+    showToast('Live wind layer unavailable (plugin not loaded)', 'error');
+    return;
+  }
   try {
     const bounds = L.latLngBounds(pts.map(p => [p.lat, p.lon]));
     const data = await loadWindGrid(bounds, atTime);
@@ -330,21 +334,24 @@ async function renderWindOverlay(pts, atTime) {
       displayValues: false,
       data,
       maxVelocity: 18,
-      velocityScale: 0.012,
-      particleAge: 90,
-      lineWidth: 1.3,
-      particleMultiplier: 0.0045,
+      velocityScale: 0.014,
+      particleAge: 80,
+      lineWidth: 2,
+      particleMultiplier: 0.012,
+      frameRate: 18,
       colorScale: [
-        'rgba(255,255,255,0.85)',
-        'rgba(186,230,253,0.9)',
-        'rgba(96,165,250,0.9)',
-        'rgba(251,191,36,0.95)',
+        'rgba(255,255,255,0.9)',
+        'rgba(186,230,253,0.95)',
+        'rgba(96,165,250,0.95)',
+        'rgba(251,191,36,1)',
         'rgba(239,68,68,1)',
       ],
     });
     velocityLayer.addTo(map);
+    console.log('Live wind layer added with', data[0].data.length, 'grid points');
   } catch (e) {
     console.warn('Live wind overlay failed:', e.message);
+    showToast('Live wind layer failed: ' + e.message, 'error');
   }
 }
 
