@@ -2,11 +2,9 @@
 // Route Wind Analyzer
 // ============================================================
 
-const WINDY_KEY      = 'EnsmRmSN5tXbcHrBgA3AtRtDWiSis50I';
+// Data: Open-Meteo (ECMWF IFS 0.25°) — same model Windy.com defaults to.
 const MAPTILER_KEY   = 'TQ5LlWGUvgHtC6UNQ8CD';
 const NUM_SAMPLES    = 30;
-const BATCH_SIZE     = 5;
-const ARROW_OFFSET_M = 180;
 
 let map, routeLayer, windRouteLayer, markersLayer;
 let routePoints    = [];
@@ -257,7 +255,7 @@ async function analyzeWind(pts) {
   const totalDist  = totalDistance(pts);
   const rideDurMs  = (totalDist / 1000 / speed) * 3600 * 1000;
 
-  setLoading(true, 0, 'Sampling route…');
+  setLoading(true, 10, 'Sampling route…');
   const samples = sampleRoute(pts, NUM_SAMPLES);
 
   for (let i = 0; i < samples.length; i++) {
@@ -267,31 +265,26 @@ async function analyzeWind(pts) {
     samples[i].estTime = new Date(rideTime.getTime() + (samples[i].distFromStart / totalDist) * rideDurMs);
   }
 
-  const results = [];
+  setLoading(true, 40, 'Fetching ECMWF wind & weather…');
+  let pointsData;
   try {
-    for (let i = 0; i < samples.length; i += BATCH_SIZE) {
-      const batch = samples.slice(i, i + BATCH_SIZE);
-      const fetched = await Promise.all(batch.map(async s => {
-        try {
-          const raw  = await fetchWind(s.lat, s.lon);
-          const wind = windAtTime(raw, s.estTime.getTime());
-          return { ...s, wind, rawWind: raw };
-        } catch (e) {
-          console.warn('Wind fetch failed:', e.message);
-          return { ...s, wind: null, rawWind: null };
-        }
-      }));
-      results.push(...fetched);
-      setLoading(true,
-        Math.round((results.length / samples.length) * 100),
-        `Fetching wind & weather (${results.length}/${samples.length})…`);
-    }
-  } finally {
+    pointsData = await fetchOpenMeteoBulk(samples);
+  } catch (e) {
     setLoading(false);
+    showToast('Weather fetch failed: ' + e.message, 'error');
+    return;
   }
+  setLoading(true, 85, 'Computing analysis…');
+
+  const results = samples.map((s, i) => {
+    const raw  = pointsData[i] || null;
+    const wind = raw ? windAtTime(raw, s.estTime.getTime()) : null;
+    return { ...s, rawWind: raw, wind };
+  });
+  setLoading(false);
 
   const valid = results.filter(r => r.wind);
-  if (!valid.length) { showToast('No wind data — check API key', 'error'); return; }
+  if (!valid.length) { showToast('No wind data', 'error'); return; }
 
   // Compute gradient + power for each sample
   for (let i = 0; i < results.length; i++) {
@@ -315,7 +308,7 @@ async function analyzeWind(pts) {
   renderWeatherSummary(results);
   renderPacingStrategy(results, lastClimbs);
   renderWindOverlay(pts, rideTime);
-  showToast(`Wind & weather loaded for ${valid.length} points`, 'success');
+  showToast(`ECMWF wind & weather loaded (${valid.length} pts)`, 'success');
 }
 
 // ── Live wind overlay (animated particles via leaflet-velocity) ─
@@ -330,7 +323,13 @@ async function renderWindOverlay(pts, atTime) {
     const data = await loadWindGrid(bounds, atTime);
     if (velocityLayer) { map.removeLayer(velocityLayer); velocityLayer = null; }
     velocityLayer = L.velocityLayer({
-      displayValues: false,
+      displayValues: true,
+      displayOptions: {
+        velocityType: 'ECMWF wind',
+        position: 'bottomleft',
+        emptyString: 'No wind data',
+        speedUnit: 'm/s',
+      },
       data,
       maxVelocity: 18,
       velocityScale: 0.012,
@@ -381,7 +380,7 @@ async function loadWindGrid(bounds, atTime) {
   }
 
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lats.join(',')}&longitude=${lons.join(',')}` +
-              `&hourly=wind_speed_10m,wind_direction_10m&forecast_days=3&timezone=UTC&wind_speed_unit=ms`;
+              `&hourly=wind_speed_10m,wind_direction_10m&models=ecmwf_ifs025&forecast_days=6&timezone=UTC&wind_speed_unit=ms`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Open-Meteo ${res.status}`);
   const json = await res.json();
@@ -420,50 +419,71 @@ async function loadWindGrid(bounds, atTime) {
   ];
 }
 
-async function fetchWind(lat, lon) {
-  const res = await fetch('https://api.windy.com/api/point-forecast/v2', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      lat, lon,
-      model: 'gfs',
-      parameters: ['wind', 'temp', 'windGust', 'rh', 'precip'],
-      levels: ['surface'],
-      key: WINDY_KEY,
-    }),
+// Bulk-fetch wind+weather for all sample points in ONE Open-Meteo call (ECMWF model).
+async function fetchOpenMeteoBulk(samples) {
+  const lats = samples.map(s => s.lat.toFixed(4)).join(',');
+  const lons = samples.map(s => s.lon.toFixed(4)).join(',');
+  const params = new URLSearchParams({
+    latitude:       lats,
+    longitude:      lons,
+    hourly:         'wind_speed_10m,wind_direction_10m,wind_gusts_10m,temperature_2m,relative_humidity_2m,precipitation',
+    models:         'ecmwf_ifs025',
+    forecast_days:  '6',
+    timezone:       'UTC',
+    wind_speed_unit:'ms',
   });
+  const res = await fetch('https://api.open-meteo.com/v1/forecast?' + params);
   if (!res.ok) {
     const txt = await res.text().catch(() => res.status);
-    throw new Error(`Windy API ${res.status}: ${txt}`);
+    throw new Error(`Open-Meteo ${res.status}: ${txt}`);
   }
-  return res.json();
+  const json = await res.json();
+  return Array.isArray(json) ? json : [json];
 }
 
+// Look up wind/weather at a specific time from one point's Open-Meteo forecast.
 function windAtTime(data, targetMs) {
-  const ts = data.ts;
-  let idx = 0, minDiff = Infinity;
-  for (let i = 0; i < ts.length; i++) {
-    const d = Math.abs(ts[i] - targetMs);
-    if (d < minDiff) { minDiff = d; idx = i; }
+  if (!data?.hourly) return null;
+  const times = data.hourly.time;
+  if (!times?.length) return null;
+
+  // Times come back like "2026-05-13T07:00" (UTC). Find the closest hour.
+  const targetHourIso = new Date(targetMs).toISOString().slice(0, 13);
+  let idx = times.findIndex(t => t.startsWith(targetHourIso));
+  if (idx < 0) {
+    let minDiff = Infinity;
+    for (let i = 0; i < times.length; i++) {
+      const tMs  = new Date(times[i] + 'Z').getTime();
+      const diff = Math.abs(tMs - targetMs);
+      if (diff < minDiff) { minDiff = diff; idx = i; }
+    }
   }
-  const u    = data['wind_u-surface'][idx];
-  const v    = data['wind_v-surface'][idx];
-  const tK   = data['temp-surface']?.[idx];
-  const gust = data['gust-surface']?.[idx];
-  const rh   = data['rh-surface']?.[idx];
-  const pr   = data['past3hprecip-surface']?.[idx];
-  const speed = Math.sqrt(u * u + v * v);
-  const tempC = tK != null ? tK - 273.15 : null;
+
+  const speed   = data.hourly.wind_speed_10m?.[idx];
+  const dirFrom = data.hourly.wind_direction_10m?.[idx];
+  if (speed == null || dirFrom == null) return null;
+
+  // Convert meteorological "from" direction to "to" direction (where wind is going)
+  const dirTo = (dirFrom + 180) % 360;
+  const fromRad = dirFrom * Math.PI / 180;
+  const u = -speed * Math.sin(fromRad);   // east component (positive = eastward motion)
+  const v = -speed * Math.cos(fromRad);   // north component
+
+  const gust  = data.hourly.wind_gusts_10m?.[idx];
+  const tempC = data.hourly.temperature_2m?.[idx];
+  const rh    = data.hourly.relative_humidity_2m?.[idx];
+  const pr    = data.hourly.precipitation?.[idx];
+
   return {
     speed,
-    dir:       (Math.atan2(u, v) * 180 / Math.PI + 360) % 360,
+    dir:        dirTo,
     u, v,
-    gust:      gust ?? speed,
-    tempC,
+    gust:       gust ?? speed,
+    tempC:      tempC ?? null,
     feelsLikeC: tempC != null ? feelsLike(tempC, speed, rh) : null,
-    rh:        rh != null ? rh : null,
-    precipMm:  pr ?? 0,
-    timestamp: new Date(ts[idx]),
+    rh:         rh ?? null,
+    precipMm:   pr ?? 0,
+    timestamp:  new Date(times[idx] + 'Z'),
   };
 }
 
@@ -523,41 +543,6 @@ function renderColoredRoute(results, pts) {
   // Re-add endpoints on top
   addEndpoint(pts[0],           '#4CAF50', 'Start');
   addEndpoint(pts[pts.length-1], '#F44336', 'Finish');
-}
-
-// ── Markers ───────────────────────────────────────────────────
-function renderMarkers(results) {
-  markersLayer.clearLayers();
-  for (const r of results) {
-    if (!r.wind) continue;
-    const { speed, dir, timestamp } = r.wind;
-    const color = speedColor(speed);
-    const hw    = headwind(speed, dir, r.bearing);
-
-    // Offset to upwind side
-    const pos = offsetPoint(r.lat, r.lon, (dir + 180) % 360, ARROW_OFFSET_M);
-
-    const icon = L.divIcon({
-      html: arrowSvg(dir, color, 48),
-      className: '',
-      iconSize:   [48, 48],
-      iconAnchor: [24, 24],
-    });
-
-    const hwLabel = hw > 0.5  ? `↗ ${hw.toFixed(1)} m/s tailwind` :
-                    hw < -0.5 ? `↙ ${Math.abs(hw).toFixed(1)} m/s headwind` : '↔ crosswind';
-    const hwCls   = hw > 0.5 ? 'popup-hw-tail' : hw < -0.5 ? 'popup-hw-head' : '';
-
-    L.marker([pos.lat, pos.lon], { icon })
-      .bindPopup(`
-        <div class="popup-km">${(r.distFromStart / 1000).toFixed(1)} km</div>
-        <div class="popup-row"><span class="popup-label">Speed</span><span>${speed.toFixed(1)} m/s (${(speed * 3.6).toFixed(1)} km/h)</span></div>
-        <div class="popup-row"><span class="popup-label">Direction</span><span>${Math.round(dir)}° ${compass(dir)}</span></div>
-        <div class="popup-row"><span class="popup-label">Component</span><span class="${hwCls}">${hwLabel}</span></div>
-        <div class="popup-time">Forecast: ${timestamp.toLocaleString()}</div>
-      `)
-      .addTo(markersLayer);
-  }
 }
 
 // ── Table ─────────────────────────────────────────────────────
