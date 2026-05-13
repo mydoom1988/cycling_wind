@@ -359,64 +359,60 @@ input:focus { border-color: var(--accent); }
   flex-direction: column;
 }
 
-#draw-landing {
-  flex: 1;
+/* In-app route drawer */
+#tab-draw { display: flex; flex-direction: column; }
+#draw-toolbar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 40px 20px;
-  overflow-y: auto;
-}
-.draw-hero {
-  max-width: 480px;
-  text-align: center;
+  justify-content: space-between;
+  padding: 9px 12px;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 36px 28px;
-}
-.draw-hero-icon { font-size: 52px; margin-bottom: 10px; }
-.draw-hero h2 { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
-.draw-hero p { color: var(--text-muted); font-size: 14px; line-height: 1.55; margin-bottom: 20px; }
-.draw-hero p strong { color: var(--text); }
-.draw-hero-btn {
-  display: inline-flex;
-  width: auto;
-  text-decoration: none;
-  padding: 11px 22px;
-  font-size: 14px;
-  margin-bottom: 22px;
-}
-.draw-steps {
-  list-style: none;
-  counter-reset: step;
-  text-align: left;
-  border-top: 1px solid var(--border);
-  padding-top: 18px;
-}
-.draw-steps li {
-  counter-increment: step;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  font-size: 13px;
-  color: var(--text-muted);
-  padding: 4px 0;
-}
-.draw-steps li::before {
-  content: counter(step);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  width: 22px; height: 22px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+#draw-stats {
+  font-size: 13px;
+  color: var(--text);
+  flex: 1;
+  min-width: 180px;
+}
+.draw-toolbar-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.btn-icon-light {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 7px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.btn-icon-light:hover { color: var(--accent); border-color: var(--accent); }
+.draw-save-btn { width: auto; padding: 7px 16px; }
+.draw-save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+#draw-map { flex: 1; min-height: 0; background: #e8e0d8; }
+
+.wp-marker {
   background: var(--accent);
   color: #fff;
+  border: 2px solid #fff;
   border-radius: 50%;
-  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.45);
+  cursor: pointer;
+  user-select: none;
 }
-.draw-steps strong { color: var(--text); }
+.wp-marker.wp-start  { background: #16a34a; }
+.wp-marker.wp-finish { background: #dc2626; }
 
 /* Wind tab */
 #tab-wind { display: flex; flex-direction: column; }
@@ -617,19 +613,23 @@ input:focus { border-color: var(--accent); }
 }
 .rider-grid > div:last-child { grid-column: 1 / -1; }
 
-/* Route action icons */
-.route-actions { display: flex; gap: 4px; }
+/* Route action buttons (icon + label) */
+.route-actions { display: flex; gap: 5px; }
 .btn-icon {
   background: var(--surface2);
   border: 1px solid var(--border);
   color: var(--text);
-  border-radius: 5px;
-  padding: 5px 7px;
+  border-radius: 6px;
+  padding: 6px 10px;
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  transition: background 0.15s, color 0.15s;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
+.btn-icon span { line-height: 1; }
 .btn-icon:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* Coach card */

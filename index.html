@@ -75,17 +75,19 @@
       <div class="card-header">
         <h3>Route</h3>
         <div class="route-actions">
-          <button id="reverse-btn" class="btn-icon" title="Reverse direction">
+          <button id="reverse-btn" class="btn-icon" title="Reverse the route direction and re-analyze">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M3 7h13l-3-3m3 3l-3 3M21 17H8l3-3m-3 3l3 3"/>
             </svg>
+            <span>Reverse</span>
           </button>
-          <button id="download-btn" class="btn-icon" title="Download GPX">
+          <button id="download-btn" class="btn-icon" title="Download this route as GPX">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
               <polyline points="7 10 12 15 17 10"/>
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
+            <span>GPX</span>
           </button>
         </div>
       </div>
@@ -189,23 +191,17 @@
       </button>
     </div>
 
-    <!-- Draw tab: link out to gpx.studio -->
+    <!-- Draw tab: in-app route builder -->
     <div id="tab-draw" class="tab-pane active">
-      <div id="draw-landing">
-        <div class="draw-hero">
-          <div class="draw-hero-icon">🗺️</div>
-          <h2>Build your route</h2>
-          <p>Draw a cycling route on <strong>gpx.studio</strong>, export it as GPX, then drop the file into the sidebar to see wind analysis along the way.</p>
-          <a href="https://gpx.studio" target="_blank" rel="noopener" class="btn-primary draw-hero-btn">
-            Open route editor →
-          </a>
-          <ol class="draw-steps">
-            <li>Open the route editor (new tab)</li>
-            <li>Draw your route, then <strong>Export → GPX</strong></li>
-            <li>Come back here and drop the GPX in the sidebar</li>
-          </ol>
+      <div id="draw-toolbar">
+        <div id="draw-stats">Tap the map to add waypoints — cycling routes snap to roads.</div>
+        <div class="draw-toolbar-actions">
+          <button id="draw-undo" class="btn-icon-light" title="Remove last waypoint">↶ Undo</button>
+          <button id="draw-clear" class="btn-icon-light" title="Clear all">✕ Clear</button>
+          <button id="draw-save" class="btn-primary draw-save-btn" disabled>Use route →</button>
         </div>
       </div>
+      <div id="draw-map"></div>
     </div>
 
     <!-- Wind tab: Leaflet map -->

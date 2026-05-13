@@ -15,6 +15,13 @@ let lastResults    = [];   // sampled points with wind+weather, cached
 let lastClimbs     = [];   // detected climbs on current route
 let velocityLayer  = null; // live wind particles overlay
 
+// In-app route drawer state
+let drawMap         = null;
+let drawRouteLayer  = null;
+let drawWaypoints   = [];   // [{lat, lon, marker}]
+let drawRouteCoords = [];   // [[lat, lon], ...] full snapped path
+let drawTotalKm     = 0;
+
 // ── Bootstrap ────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   initMap();
@@ -31,6 +38,10 @@ function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('hidden', p.id !== 'tab-' + name));
   if (name === 'wind') map.invalidateSize();
+  if (name === 'draw') {
+    ensureDrawMap();
+    requestAnimationFrame(() => drawMap && drawMap.invalidateSize());
+  }
 }
 
 // ── Map setup ─────────────────────────────────────────────────
@@ -79,6 +90,11 @@ function initUI() {
   document.getElementById('ride-time').addEventListener('input', updateFinishTime);
   document.getElementById('download-btn').addEventListener('click', downloadGpx);
   document.getElementById('reverse-btn').addEventListener('click', reverseRoute);
+
+  // Draw-tab actions
+  document.getElementById('draw-clear').addEventListener('click', clearDraw);
+  document.getElementById('draw-undo').addEventListener('click', undoDraw);
+  document.getElementById('draw-save').addEventListener('click', saveDraw);
 
   // Wind-table collapse
   const toggleTable = () => {
@@ -1119,6 +1135,149 @@ function renderClimbs(climbs) {
     });
     list.appendChild(row);
   }
+}
+
+// ── In-app route drawer ───────────────────────────────────────
+function ensureDrawMap() {
+  if (drawMap) return;
+  drawMap = L.map('draw-map', { center: [55.0, 24.0], zoom: 8 });
+  L.tileLayer(`https://api.maptiler.com/maps/outdoor/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`, {
+    attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+    maxZoom: 22, tileSize: 512, zoomOffset: -1,
+  }).addTo(drawMap);
+  drawRouteLayer = L.layerGroup().addTo(drawMap);
+  drawMap.on('click', e => addWaypoint(e.latlng.lat, e.latlng.lng));
+
+  // Try to centre on user's location
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      pos => drawMap.setView([pos.coords.latitude, pos.coords.longitude], 12),
+      () => {},
+      { timeout: 4000 }
+    );
+  }
+}
+
+function waypointIcon(num, total) {
+  const cls = num === 1 ? 'wp-start' : (num === total ? 'wp-finish' : '');
+  return L.divIcon({
+    html: `<div class="wp-marker ${cls}">${num}</div>`,
+    iconSize:  [26, 26],
+    iconAnchor:[13, 13],
+    className: '',
+  });
+}
+
+function rebuildWaypointIcons() {
+  const total = drawWaypoints.length;
+  drawWaypoints.forEach((w, i) => {
+    w.marker.setIcon(waypointIcon(i + 1, total));
+  });
+}
+
+async function addWaypoint(lat, lon) {
+  const wp = { lat, lon, marker: null };
+  wp.marker = L.marker([lat, lon], { icon: waypointIcon(drawWaypoints.length + 1, drawWaypoints.length + 1) }).addTo(drawMap);
+  wp.marker.on('click', () => removeWaypoint(wp));
+  drawWaypoints.push(wp);
+  rebuildWaypointIcons();
+  if (drawWaypoints.length >= 2) await recalculateRoute();
+  updateDrawStats();
+}
+
+function removeWaypoint(wp) {
+  const idx = drawWaypoints.indexOf(wp);
+  if (idx < 0) return;
+  drawMap.removeLayer(wp.marker);
+  drawWaypoints.splice(idx, 1);
+  rebuildWaypointIcons();
+  if (drawWaypoints.length >= 2) recalculateRoute();
+  else {
+    drawRouteLayer.clearLayers();
+    drawRouteCoords = [];
+    drawTotalKm = 0;
+  }
+  updateDrawStats();
+}
+
+function undoDraw() {
+  if (!drawWaypoints.length) return;
+  removeWaypoint(drawWaypoints[drawWaypoints.length - 1]);
+}
+
+function clearDraw() {
+  drawWaypoints.forEach(w => drawMap && drawMap.removeLayer(w.marker));
+  drawWaypoints = [];
+  drawRouteLayer && drawRouteLayer.clearLayers();
+  drawRouteCoords = [];
+  drawTotalKm = 0;
+  updateDrawStats();
+}
+
+async function recalculateRoute() {
+  if (drawWaypoints.length < 2) return;
+  const coords = drawWaypoints.map(w => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join(';');
+  const url = `https://routing.openstreetmap.de/routed-bike/route/v1/driving/${coords}?overview=full&geometries=geojson`;
+  try {
+    setLoading(true, 50, 'Routing…');
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Routing ${res.status}`);
+    const data = await res.json();
+    if (data.code !== 'Ok') throw new Error('Route: ' + data.code);
+    const route = data.routes[0];
+    drawRouteCoords = route.geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+    drawTotalKm    = route.distance / 1000;
+
+    drawRouteLayer.clearLayers();
+    L.polyline(drawRouteCoords, {
+      color: '#1d4ed8', weight: 5, opacity: 0.9, lineJoin: 'round',
+    }).addTo(drawRouteLayer);
+  } catch (e) {
+    showToast('Routing failed: ' + e.message, 'error');
+  } finally {
+    setLoading(false);
+  }
+}
+
+function updateDrawStats() {
+  const el  = document.getElementById('draw-stats');
+  const btn = document.getElementById('draw-save');
+  if (!el || !btn) return;
+  if (drawWaypoints.length === 0) {
+    el.textContent = 'Tap the map to add waypoints — cycling routes snap to roads.';
+  } else if (drawWaypoints.length === 1) {
+    el.textContent = '1 waypoint set — add at least 1 more.';
+  } else {
+    el.textContent = `${drawWaypoints.length} waypoints · ${drawTotalKm.toFixed(1)} km · click a marker to remove`;
+  }
+  btn.disabled = drawRouteCoords.length < 2;
+}
+
+function saveDraw() {
+  if (drawRouteCoords.length < 2) { showToast('Add at least 2 waypoints', 'error'); return; }
+  const trkpts = drawRouteCoords
+    .map(([lat, lon]) => `    <trkpt lat="${lat.toFixed(6)}" lon="${lon.toFixed(6)}"></trkpt>`)
+    .join('\n');
+  const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+  rawGpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1" creator="Route Wind">
+  <trk><name>Route Wind ${stamp}</name><trkseg>
+${trkpts}
+  </trkseg></trk>
+</gpx>`;
+  rawGpxName  = 'route-' + Date.now();
+  routePoints = drawRouteCoords.map(([lat, lon]) => ({ lat, lon, ele: null, time: null }));
+
+  document.getElementById('file-name').textContent = `📍 Drawn route (${drawTotalKm.toFixed(1)} km)`;
+  document.getElementById('file-name').classList.remove('hidden');
+
+  displayRoute(routePoints);
+  switchTab('wind');
+  requestAnimationFrame(() => {
+    map.invalidateSize();
+    map.fitBounds(L.polyline(routePoints.map(p => [p.lat, p.lon])).getBounds(), { padding: [50, 50] });
+  });
+  showToast('Route saved — hit Analyze ↑', 'success');
 }
 
 // ── UI helpers ────────────────────────────────────────────────
