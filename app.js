@@ -31,6 +31,11 @@ document.addEventListener('DOMContentLoaded', () => {
   now.setMinutes(0, 0, 0);
   const local = new Date(now - now.getTimezoneOffset() * 60000);
   document.getElementById('ride-time').value = local.toISOString().slice(0, 16);
+
+  // Draw tab is active by default — initialize its map immediately
+  // (otherwise it stays empty until you switch tabs away and back)
+  ensureDrawMap();
+  requestAnimationFrame(() => drawMap && drawMap.invalidateSize());
 });
 
 // ── Tabs ─────────────────────────────────────────────────────
