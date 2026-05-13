@@ -73,9 +73,9 @@ async function setupRainLayer() {
     // Color 8 = Dark Sky (transparent where no precip); smooth=1, snow=1
     const url = `${data.host}${latest.path}/256/{z}/{x}/{y}/8/1_1.png`;
     const rainLayer = L.tileLayer(url, {
-      opacity: 0.65,
-      maxNativeZoom: 10,   // RainViewer tiles only exist up to ~z10
-      maxZoom: 22,         // but allow Leaflet to upscale the last available tile
+      opacity: 0.6,
+      maxNativeZoom: 7,    // RainViewer's free radar tiles only cover up to z7
+      maxZoom: 22,         // Leaflet upscales the z7 tile for higher zooms
       attribution: '© <a href="https://rainviewer.com/">RainViewer</a>',
     });
     L.control.layers(null, { '🌧 Rain (radar)': rainLayer }, {
