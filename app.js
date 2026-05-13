@@ -58,6 +58,31 @@ function initMap() {
   routeLayer      = L.layerGroup().addTo(map);
   windRouteLayer  = L.layerGroup().addTo(map);
   markersLayer    = L.layerGroup().addTo(map);
+
+  setupRainLayer();
+}
+
+async function setupRainLayer() {
+  try {
+    const res = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+    if (!res.ok) return;
+    const data = await res.json();
+    const past = data.radar?.past;
+    if (!past?.length) return;
+    const latest = past[past.length - 1];
+    // Color 8 = Dark Sky (transparent where no precip); smooth=1, snow=1
+    const url = `${data.host}${latest.path}/256/{z}/{x}/{y}/8/1_1.png`;
+    const rainLayer = L.tileLayer(url, {
+      opacity: 0.65,
+      attribution: '© <a href="https://rainviewer.com/">RainViewer</a>',
+    });
+    L.control.layers(null, { '🌧 Rain (radar)': rainLayer }, {
+      collapsed: false,
+      position: 'topleft',
+    }).addTo(map);
+  } catch (e) {
+    console.warn('Rain layer setup failed:', e.message);
+  }
 }
 
 // ── UI wiring ─────────────────────────────────────────────────
@@ -349,9 +374,9 @@ async function renderWindOverlay(pts, atTime) {
       data,
       maxVelocity: 18,
       velocityScale: 0.012,
-      particleAge: 90,
-      lineWidth: 1.4,
-      particleMultiplier: 0.0035,
+      particleAge: 70,
+      lineWidth: 1.2,
+      particleMultiplier: 0.0018,
       frameRate: 16,
       colorScale: [
         'rgba(255,255,255,0.85)',
