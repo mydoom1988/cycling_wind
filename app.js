@@ -74,6 +74,8 @@ async function setupRainLayer() {
     const url = `${data.host}${latest.path}/256/{z}/{x}/{y}/8/1_1.png`;
     const rainLayer = L.tileLayer(url, {
       opacity: 0.65,
+      maxNativeZoom: 10,   // RainViewer tiles only exist up to ~z10
+      maxZoom: 22,         // but allow Leaflet to upscale the last available tile
       attribution: '© <a href="https://rainviewer.com/">RainViewer</a>',
     });
     L.control.layers(null, { '🌧 Rain (radar)': rainLayer }, {
