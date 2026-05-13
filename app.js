@@ -1286,29 +1286,49 @@ function updateDrawStats() {
 }
 
 async function fetchElevations(coords) {
-  // Batch up to 100 per Open-Meteo call, run in parallel
-  const BATCH = 100;
-  const batches = [];
-  for (let i = 0; i < coords.length; i += BATCH) {
-    batches.push({ start: i, coords: coords.slice(i, i + BATCH) });
+  // Open-Meteo's elevation endpoint caps at 100 coords per call AND rate-limits
+  // bursts. So: subsample to <=100 evenly-spaced points (1 API call total),
+  // then linearly interpolate elevation back to every route coordinate.
+  if (!coords.length) return [];
+
+  const MAX_SAMPLES = 100;
+  const N = Math.min(MAX_SAMPLES, coords.length);
+  const samples = [];                       // [{idx, ele}]
+  const seen    = new Set();
+  for (let k = 0; k < N; k++) {
+    const idx = Math.round((k / Math.max(N - 1, 1)) * (coords.length - 1));
+    if (!seen.has(idx)) { seen.add(idx); samples.push({ idx }); }
   }
-  const results = await Promise.all(batches.map(async b => {
-    const lats = b.coords.map(c => c[0].toFixed(5)).join(',');
-    const lons = b.coords.map(c => c[1].toFixed(5)).join(',');
-    const url  = `https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lons}`;
-    try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Elevation ${res.status}`);
-      const data = await res.json();
-      return { start: b.start, eles: data.elevation || [] };
-    } catch (e) {
-      console.warn('Elevation batch failed:', e.message);
-      return { start: b.start, eles: [] };
-    }
-  }));
-  const out = new Array(coords.length).fill(null);
-  for (const r of results) r.eles.forEach((e, j) => { out[r.start + j] = e; });
-  return out;
+
+  const lats = samples.map(s => coords[s.idx][0].toFixed(5)).join(',');
+  const lons = samples.map(s => coords[s.idx][1].toFixed(5)).join(',');
+  const url  = `https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lons}`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Elevation ${res.status}`);
+    const data = await res.json();
+    const eles = data.elevation || [];
+    samples.forEach((s, k) => { s.ele = eles[k]; });
+  } catch (e) {
+    console.warn('Elevation fetch failed:', e.message);
+    return new Array(coords.length).fill(null);
+  }
+
+  // Linear interpolation from sampled values to every index
+  const result = new Array(coords.length).fill(null);
+  let s = 0;
+  for (let i = 0; i < coords.length; i++) {
+    while (s < samples.length - 1 && samples[s + 1].idx <= i) s++;
+    const a = samples[s];
+    const b = samples[Math.min(s + 1, samples.length - 1)];
+    if (a.ele == null && b.ele == null) continue;
+    if (a.ele == null)        { result[i] = b.ele; continue; }
+    if (b.ele == null || a.idx === b.idx) { result[i] = a.ele; continue; }
+    const t = (i - a.idx) / (b.idx - a.idx);
+    result[i] = a.ele + t * (b.ele - a.ele);
+  }
+  return result;
 }
 
 async function saveDraw() {
