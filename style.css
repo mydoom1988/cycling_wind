@@ -663,35 +663,6 @@ input:focus { border-color: var(--accent); }
 }
 .coach-fuel strong { color: var(--text); }
 
-/* Departure recommender */
-#departure-best { font-size: 13px; color: var(--text); margin-bottom: 2px; }
-#departure-best strong { color: var(--accent); }
-#departure-list { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
-.departure-row {
-  display: grid;
-  grid-template-columns: 82px 1fr auto;
-  gap: 8px;
-  align-items: center;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 6px 8px;
-  font-size: 12px;
-}
-.departure-row.best { border-color: #16a34a; background: rgba(22,163,74,0.08); }
-.departure-time { font-weight: 700; color: var(--text); }
-.departure-bar {
-  height: 6px;
-  background: var(--surface2);
-  border-radius: 3px;
-  overflow: hidden;
-  position: relative;
-}
-.departure-bar-fill { height: 100%; background: var(--accent); border-radius: 3px; }
-.departure-row.best .departure-bar-fill { background: #16a34a; }
-.departure-row.worst .departure-bar-fill { background: #dc2626; }
-.departure-hw { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
-
 /* Pacing strategy */
 .pacing-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .pacing-list li {

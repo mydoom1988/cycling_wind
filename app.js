@@ -313,7 +313,6 @@ async function analyzeWind(pts) {
   renderTable(results);
   renderCoachCard(results, totalDist, speed);
   renderWeatherSummary(results);
-  renderDepartureRecommender(results, totalDist, speed, rideTime);
   renderPacingStrategy(results, lastClimbs);
   renderWindOverlay(pts, rideTime);
   showToast(`Wind & weather loaded for ${valid.length} points`, 'success');
@@ -334,16 +333,16 @@ async function renderWindOverlay(pts, atTime) {
       displayValues: false,
       data,
       maxVelocity: 18,
-      velocityScale: 0.014,
-      particleAge: 80,
-      lineWidth: 2,
-      particleMultiplier: 0.012,
-      frameRate: 18,
+      velocityScale: 0.012,
+      particleAge: 90,
+      lineWidth: 1.4,
+      particleMultiplier: 0.0035,
+      frameRate: 16,
       colorScale: [
-        'rgba(255,255,255,0.9)',
-        'rgba(186,230,253,0.95)',
-        'rgba(96,165,250,0.95)',
-        'rgba(251,191,36,1)',
+        'rgba(255,255,255,0.85)',
+        'rgba(186,230,253,0.9)',
+        'rgba(96,165,250,0.9)',
+        'rgba(251,191,36,0.95)',
         'rgba(239,68,68,1)',
       ],
     });
@@ -356,14 +355,19 @@ async function renderWindOverlay(pts, atTime) {
 }
 
 async function loadWindGrid(bounds, atTime) {
-  const COLS = 14;
-  const ROWS = 9;
+  const COLS = 22;
+  const ROWS = 16;
   const sw = bounds.getSouthWest();
   const ne = bounds.getNorthEast();
-  const padLat = Math.max(0.05, (ne.lat - sw.lat) * 0.12);
-  const padLon = Math.max(0.05, (ne.lng - sw.lng) * 0.12);
-  const minLat = sw.lat - padLat, maxLat = ne.lat + padLat;
-  const minLon = sw.lng - padLon, maxLon = ne.lng + padLon;
+
+  // Cover a generous region around the route so particles fill the visible map
+  // even after the user pans/zooms. At minimum ~250 km square; otherwise route + 100%.
+  const centerLat = (sw.lat + ne.lat) / 2;
+  const centerLon = (sw.lng + ne.lng) / 2;
+  const halfLat = Math.max(1.1, (ne.lat - sw.lat));            // ~120 km min
+  const halfLon = Math.max(1.6, (ne.lng - sw.lng));            // ~110 km min @ 45°N
+  const minLat = centerLat - halfLat, maxLat = centerLat + halfLat;
+  const minLon = centerLon - halfLon, maxLon = centerLon + halfLon;
   const dx = (maxLon - minLon) / (COLS - 1);
   const dy = (maxLat - minLat) / (ROWS - 1);
 
@@ -946,123 +950,6 @@ function renderWeatherSummary(results) {
   document.getElementById('weather-temp').textContent  = avgT.toFixed(0) + '°C';
   document.getElementById('weather-feels').textContent = avgFL.toFixed(0) + '°C';
   document.getElementById('weather-rain').textContent  = maxPr > 0.1 ? maxPr.toFixed(1) + ' mm' : 'dry';
-}
-
-// ── Departure time recommender ───────────────────────────────
-function exposureForStart(samples, startMs, totalDistM, speedKmh) {
-  const rideDurMs = (totalDistM / 1000 / speedKmh) * 3600 * 1000;
-  let headSum = 0, timeSum = 0;
-  for (let i = 0; i < samples.length; i++) {
-    const s = samples[i];
-    if (!s.rawWind) continue;
-    const ms   = startMs + (s.distFromStart / totalDistM) * rideDurMs;
-    const w    = windAtTime(s.rawWind, ms);
-    const hw   = headwind(w.speed, w.dir, s.bearing);
-    const segD = Math.max(1, (samples[i+1]?.distFromStart ?? totalDistM) - (samples[i-1]?.distFromStart ?? 0)) / 2;
-    const segT = (segD / 1000 / speedKmh) * 3600;
-    headSum += Math.max(0, -hw) * segT;
-    timeSum += segT;
-  }
-  return timeSum ? headSum / timeSum : 0;  // avg headwind m/s over the ride
-}
-
-// Allowed riding windows (local time):
-//   Weekday (Mon-Fri): 16:00 start window, must finish by 20:00
-//   Weekend (Sat/Sun): 05:00 start window, must finish by 20:00
-function rideWindowFor(date) {
-  const dow = date.getDay();              // 0 Sun … 6 Sat
-  const isWeekend = dow === 0 || dow === 6;
-  return { startHour: isWeekend ? 5 : 16, endHour: 20 };
-}
-
-function isValidRideStart(startMs, rideDurMs) {
-  const start = new Date(startMs);
-  const { startHour, endHour } = rideWindowFor(start);
-  const dayStart = new Date(start); dayStart.setHours(startHour, 0, 0, 0);
-  const dayEnd   = new Date(start); dayEnd.setHours(endHour,   0, 0, 0);
-  return startMs >= dayStart.getTime() && (startMs + rideDurMs) <= dayEnd.getTime();
-}
-
-function renderDepartureRecommender(samples, totalDistM, speedKmh, baseTime) {
-  const rideDurMs = (totalDistM / 1000 / speedKmh) * 3600 * 1000;
-
-  // Build candidate pool: every hour for the next 5 days, starting from "now".
-  // Always include the user's current selection too (even if outside the window)
-  // so we can compute the "vs current" saving message.
-  const nowDate = new Date();
-  nowDate.setMinutes(0, 0, 0);
-  nowDate.setHours(nowDate.getHours() + 1);          // next full hour
-  const searchStart = nowDate.getTime();
-
-  const pool = [];
-  for (let h = 0; h < 5 * 24; h++) {
-    pool.push(searchStart + h * 3600 * 1000);
-  }
-
-  const validMs = pool.filter(ms => isValidRideStart(ms, rideDurMs));
-  const candidates = validMs.map(ms => ({
-    startMs:  ms,
-    exposure: exposureForStart(samples, ms, totalDistM, speedKmh),
-  }));
-
-  const bestLine = document.getElementById('departure-best');
-  const list     = document.getElementById('departure-list');
-  list.innerHTML = '';
-
-  if (!candidates.length) {
-    bestLine.innerHTML =
-      'No valid start fits — ride too long for the 16:00–20:00 weekday window. ' +
-      'Try a weekend or split the ride.';
-    return;
-  }
-
-  const sorted = [...candidates].sort((a, b) => a.exposure - b.exposure);
-  const best   = sorted[0];
-  const worst  = sorted[sorted.length - 1];
-  const maxExp = Math.max(0.01, ...candidates.map(c => c.exposure));
-
-  const bestDate = new Date(best.startMs);
-  const bestStr  = bestDate.toLocaleString([], {
-    weekday: 'short', month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  });
-
-  // Compare against the user's currently-set ride time if available
-  const currentMs   = baseTime.getTime();
-  const currentExp  = exposureForStart(samples, currentMs, totalDistM, speedKmh);
-  const currentValid = isValidRideStart(currentMs, rideDurMs);
-  let saving = '';
-  if (currentValid && currentMs !== best.startMs) {
-    const pct = ((currentExp - best.exposure) / Math.max(currentExp, 0.01)) * 100;
-    if (pct > 5) saving = ` — ${pct.toFixed(0)}% less headwind vs current`;
-  }
-  bestLine.innerHTML = `Optimal: <strong>${bestStr}</strong>${saving}`;
-
-  // Show up to 10 candidates, chronologically, preferring those near "best"
-  const limited = candidates.slice(0, 10);
-
-  for (const c of limited) {
-    const d   = new Date(c.startMs);
-    const pct = (c.exposure / maxExp) * 100;
-    const label = d.toLocaleString([], {
-      weekday: 'short', hour: '2-digit', minute: '2-digit',
-    });
-    const row = document.createElement('div');
-    row.className = 'departure-row' +
-      (c.startMs === best.startMs ? ' best' : '') +
-      (c.startMs === worst.startMs ? ' worst' : '');
-    row.innerHTML = `
-      <span class="departure-time">${label}</span>
-      <div class="departure-bar"><div class="departure-bar-fill" style="width:${pct.toFixed(0)}%"></div></div>
-      <span class="departure-hw">${c.exposure.toFixed(1)} m/s</span>`;
-    row.addEventListener('click', () => {
-      const local = new Date(c.startMs - d.getTimezoneOffset() * 60000);
-      document.getElementById('ride-time').value = local.toISOString().slice(0, 16);
-      updateFinishTime();
-      analyzeWind(routePoints);
-    });
-    list.appendChild(row);
-  }
 }
 
 // ── Pacing strategy ──────────────────────────────────────────
