@@ -1253,10 +1253,55 @@ function updateDrawStats() {
   btn.disabled = drawRouteCoords.length < 2;
 }
 
-function saveDraw() {
+async function fetchElevations(coords) {
+  // Batch up to 100 per Open-Meteo call, run in parallel
+  const BATCH = 100;
+  const batches = [];
+  for (let i = 0; i < coords.length; i += BATCH) {
+    batches.push({ start: i, coords: coords.slice(i, i + BATCH) });
+  }
+  const results = await Promise.all(batches.map(async b => {
+    const lats = b.coords.map(c => c[0].toFixed(5)).join(',');
+    const lons = b.coords.map(c => c[1].toFixed(5)).join(',');
+    const url  = `https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lons}`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Elevation ${res.status}`);
+      const data = await res.json();
+      return { start: b.start, eles: data.elevation || [] };
+    } catch (e) {
+      console.warn('Elevation batch failed:', e.message);
+      return { start: b.start, eles: [] };
+    }
+  }));
+  const out = new Array(coords.length).fill(null);
+  for (const r of results) r.eles.forEach((e, j) => { out[r.start + j] = e; });
+  return out;
+}
+
+async function saveDraw() {
   if (drawRouteCoords.length < 2) { showToast('Add at least 2 waypoints', 'error'); return; }
-  const trkpts = drawRouteCoords
-    .map(([lat, lon]) => `    <trkpt lat="${lat.toFixed(6)}" lon="${lon.toFixed(6)}"></trkpt>`)
+
+  setLoading(true, 30, 'Fetching elevation…');
+  let eles = [];
+  try {
+    eles = await fetchElevations(drawRouteCoords);
+  } catch (e) {
+    console.warn('Elevation fetch failed:', e.message);
+  }
+  setLoading(false);
+
+  routePoints = drawRouteCoords.map(([lat, lon], i) => ({
+    lat, lon,
+    ele:  eles[i] ?? null,
+    time: null,
+  }));
+
+  const trkpts = routePoints
+    .map(p => {
+      const eleTag = p.ele != null ? `<ele>${p.ele.toFixed(1)}</ele>` : '';
+      return `    <trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}">${eleTag}</trkpt>`;
+    })
     .join('\n');
   const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
   rawGpx = `<?xml version="1.0" encoding="UTF-8"?>
@@ -1266,7 +1311,6 @@ ${trkpts}
   </trkseg></trk>
 </gpx>`;
   rawGpxName  = 'route-' + Date.now();
-  routePoints = drawRouteCoords.map(([lat, lon]) => ({ lat, lon, ele: null, time: null }));
 
   document.getElementById('file-name').textContent = `📍 Drawn route (${drawTotalKm.toFixed(1)} km)`;
   document.getElementById('file-name').classList.remove('hidden');
