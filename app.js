@@ -14,6 +14,7 @@ let rawGpxName     = '';
 let lastResults    = [];   // sampled points with wind+weather, cached
 let lastClimbs     = [];   // detected climbs on current route
 let velocityLayer  = null; // live wind particles overlay
+let windLayerCtrl  = null; // Leaflet layers control (wind-analysis map)
 
 // In-app route drawer state
 let drawMap         = null;
@@ -60,12 +61,26 @@ function switchTab(name) {
 function initMap() {
   map = L.map('map', { center: [50, 10], zoom: 5 });
 
-  L.tileLayer(`https://api.maptiler.com/maps/outdoor/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`, {
-    attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
-    maxZoom: 22,
-    tileSize: 512,
-    zoomOffset: -1,
-  }).addTo(map);
+  const windOutdoor = L.tileLayer(
+    `https://api.maptiler.com/maps/outdoor/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`, {
+      attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+      maxZoom: 22, tileSize: 512, zoomOffset: -1,
+    }
+  ).addTo(map);
+
+  const windSatellite = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: '© <a href="https://www.esri.com/">Esri</a> World Imagery',
+      maxZoom: 19,
+    }
+  );
+
+  // Base-layer control — overlays (rain) are added later in setupRainLayer()
+  windLayerCtrl = L.control.layers(
+    { '🗺 Outdoor': windOutdoor, '🛰 Satellite': windSatellite },
+    {},
+    { collapsed: false, position: 'topleft' }
+  ).addTo(map);
 
   routeLayer      = L.layerGroup().addTo(map);
   windRouteLayer  = L.layerGroup().addTo(map);
@@ -90,10 +105,13 @@ async function setupRainLayer() {
       maxZoom: 22,         // Leaflet upscales the z7 tile for higher zooms
       attribution: '© <a href="https://rainviewer.com/">RainViewer</a>',
     });
-    L.control.layers(null, { '🌧 Rain (radar)': rainLayer }, {
-      collapsed: false,
-      position: 'topleft',
-    }).addTo(map);
+    if (windLayerCtrl) {
+      windLayerCtrl.addOverlay(rainLayer, '🌧 Rain (radar)');
+    } else {
+      L.control.layers(null, { '🌧 Rain (radar)': rainLayer }, {
+        collapsed: false, position: 'topleft',
+      }).addTo(map);
+    }
   } catch (e) {
     console.warn('Rain layer setup failed:', e.message);
   }
@@ -1273,10 +1291,26 @@ function renderDrawMarkers() {
 function ensureDrawMap() {
   if (drawMap) return;
   drawMap = L.map('draw-map', { center: [55.0, 24.0], zoom: 8 });
-  L.tileLayer(`https://api.maptiler.com/maps/outdoor/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`, {
-    attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
-    maxZoom: 22, tileSize: 512, zoomOffset: -1,
-  }).addTo(drawMap);
+
+  const drawOutdoor = L.tileLayer(
+    `https://api.maptiler.com/maps/outdoor/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`, {
+      attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+      maxZoom: 22, tileSize: 512, zoomOffset: -1,
+    }
+  ).addTo(drawMap);
+
+  const drawSatellite = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: '© <a href="https://www.esri.com/">Esri</a> World Imagery',
+      maxZoom: 19,
+    }
+  );
+
+  L.control.layers(
+    { '🗺 Outdoor': drawOutdoor, '🛰 Satellite': drawSatellite },
+    {},
+    { collapsed: true, position: 'topright' }
+  ).addTo(drawMap);
   drawRouteLayer   = L.layerGroup().addTo(drawMap);
   drawMarkersLayer = L.layerGroup().addTo(drawMap);
   drawMap.on('click', e => addWaypoint(e.latlng.lat, e.latlng.lng));
