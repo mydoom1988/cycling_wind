@@ -405,9 +405,9 @@ async function renderWindOverlay(pts, atTime) {
       data,
       maxVelocity: 18,
       velocityScale: 0.012,
-      particleAge: 70,
+      particleAge: 60,
       lineWidth: 1.2,
-      particleMultiplier: 0.0018,
+      particleMultiplier: 0.0004,
       frameRate: 16,
       colorScale: [
         'rgba(255,255,255,0.85)',
