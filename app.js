@@ -61,13 +61,6 @@ function switchTab(name) {
 function initMap() {
   map = L.map('map', { center: [50, 10], zoom: 5 });
 
-  const windOutdoor = L.tileLayer(
-    `https://api.maptiler.com/maps/outdoor/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`, {
-      attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
-      maxZoom: 22, tileSize: 512, zoomOffset: -1,
-    }
-  ).addTo(map);
-
   const windSatellite = L.tileLayer(
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       attribution: '© <a href="https://www.esri.com/">Esri</a> World Imagery',
@@ -80,11 +73,11 @@ function initMap() {
       attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
       maxZoom: 22, tileSize: 512, zoomOffset: -1,
     }
-  );
+  ).addTo(map);
 
   // Base-layer control — overlays (rain) are added later in setupRainLayer()
   windLayerCtrl = L.control.layers(
-    { '🗺 Outdoor': windOutdoor, '🛰 Satellite': windSatellite, '🛰 Hybrid': windHybrid },
+    { '🛰 Satellite': windSatellite, '🛰 Hybrid': windHybrid },
     {},
     { collapsed: false, position: 'topleft' }
   ).addTo(map);
@@ -1299,13 +1292,6 @@ function ensureDrawMap() {
   if (drawMap) return;
   drawMap = L.map('draw-map', { center: [55.0, 24.0], zoom: 8 });
 
-  const drawOutdoor = L.tileLayer(
-    `https://api.maptiler.com/maps/outdoor/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`, {
-      attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
-      maxZoom: 22, tileSize: 512, zoomOffset: -1,
-    }
-  ).addTo(drawMap);
-
   const drawSatellite = L.tileLayer(
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       attribution: '© <a href="https://www.esri.com/">Esri</a> World Imagery',
@@ -1318,10 +1304,10 @@ function ensureDrawMap() {
       attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
       maxZoom: 22, tileSize: 512, zoomOffset: -1,
     }
-  );
+  ).addTo(drawMap);
 
   L.control.layers(
-    { '🗺 Outdoor': drawOutdoor, '🛰 Satellite': drawSatellite, '🛰 Hybrid': drawHybrid },
+    { '🛰 Satellite': drawSatellite, '🛰 Hybrid': drawHybrid },
     {},
     { collapsed: true, position: 'topright' }
   ).addTo(drawMap);
