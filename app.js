@@ -75,9 +75,16 @@ function initMap() {
     }
   );
 
+  const windHybrid = L.tileLayer(
+    `https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.jpg?key=${MAPTILER_KEY}`, {
+      attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+      maxZoom: 22, tileSize: 512, zoomOffset: -1,
+    }
+  );
+
   // Base-layer control — overlays (rain) are added later in setupRainLayer()
   windLayerCtrl = L.control.layers(
-    { '🗺 Outdoor': windOutdoor, '🛰 Satellite': windSatellite },
+    { '🗺 Outdoor': windOutdoor, '🛰 Satellite': windSatellite, '🛰 Hybrid': windHybrid },
     {},
     { collapsed: false, position: 'topleft' }
   ).addTo(map);
@@ -1306,8 +1313,15 @@ function ensureDrawMap() {
     }
   );
 
+  const drawHybrid = L.tileLayer(
+    `https://api.maptiler.com/maps/hybrid/{z}/{x}/{y}.jpg?key=${MAPTILER_KEY}`, {
+      attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+      maxZoom: 22, tileSize: 512, zoomOffset: -1,
+    }
+  );
+
   L.control.layers(
-    { '🗺 Outdoor': drawOutdoor, '🛰 Satellite': drawSatellite },
+    { '🗺 Outdoor': drawOutdoor, '🛰 Satellite': drawSatellite, '🛰 Hybrid': drawHybrid },
     {},
     { collapsed: true, position: 'topright' }
   ).addTo(drawMap);
