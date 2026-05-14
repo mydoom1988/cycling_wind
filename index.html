@@ -194,12 +194,57 @@
     <!-- Draw tab: in-app route builder -->
     <div id="tab-draw" class="tab-pane active">
       <div id="draw-toolbar">
-        <div id="draw-stats">Tap the map to add waypoints — cycling routes snap to roads.</div>
-        <div class="draw-toolbar-actions">
-          <button id="draw-undo" class="btn-icon-light" title="Remove last waypoint">↶ Undo</button>
-          <button id="draw-clear" class="btn-icon-light" title="Clear all">✕ Clear</button>
-          <button id="draw-save" class="btn-primary draw-save-btn" disabled>Use route →</button>
+
+        <!-- Row 1: Location search -->
+        <div class="draw-row draw-search-row">
+          <div class="draw-search-wrap" id="draw-search-wrap">
+            <svg class="draw-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="text" id="draw-search" placeholder="Search for a start location…" autocomplete="off" spellcheck="false" />
+            <button id="draw-search-clear" class="draw-search-clear" style="display:none" aria-label="Clear search">✕</button>
+          </div>
+          <div id="draw-suggestions" class="draw-suggestions"></div>
         </div>
+
+        <!-- Row 2: Routing preferences -->
+        <div class="draw-row draw-prefs-row">
+          <div class="draw-pref-group">
+            <span class="draw-pref-label">Activity</span>
+            <div class="draw-pills" id="draw-activity-pills">
+              <button class="draw-pill active" data-value="road">🚴 Road</button>
+              <button class="draw-pill" data-value="gravel">🪨 Gravel</button>
+              <button class="draw-pill" data-value="mtb">⛰ MTB</button>
+            </div>
+          </div>
+          <div class="draw-pref-sep"></div>
+          <div class="draw-pref-group">
+            <label class="draw-pref-toggle" title="Connect waypoints with straight lines instead of snapping to roads">
+              <span class="draw-pref-label">Manual</span>
+              <input type="checkbox" id="draw-manual-toggle" />
+              <span class="draw-toggle-track"></span>
+            </label>
+          </div>
+          <div class="draw-pref-sep"></div>
+          <div class="draw-pref-group">
+            <label class="draw-pref-toggle" title="Show distance markers every kilometre">
+              <span class="draw-pref-label">km marks</span>
+              <input type="checkbox" id="draw-markers-toggle" />
+              <span class="draw-toggle-track"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Row 3: Stats + actions -->
+        <div class="draw-row draw-stats-actions-row">
+          <div id="draw-stats">Tap the map to add waypoints — cycling routes snap to roads.</div>
+          <div class="draw-toolbar-actions">
+            <button id="draw-undo" class="btn-icon-light" title="Remove last waypoint">↶ Undo</button>
+            <button id="draw-clear" class="btn-icon-light" title="Clear all">✕ Clear</button>
+            <button id="draw-save" class="btn-primary draw-save-btn" disabled>Use route →</button>
+          </div>
+        </div>
+
       </div>
       <div id="draw-map"></div>
     </div>

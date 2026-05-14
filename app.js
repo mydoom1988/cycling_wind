@@ -22,6 +22,13 @@ let drawWaypoints   = [];   // [{lat, lon, marker}]
 let drawRouteCoords = [];   // [[lat, lon], ...] full snapped path
 let drawTotalKm     = 0;
 
+// Draw routing preferences
+let drawProfile      = 'road';  // 'road' | 'gravel' | 'mtb'
+let drawManualMode   = false;   // straight-line vs road-snapped routing
+let drawShowMarkers  = false;   // show km distance markers on route
+let drawMarkersLayer = null;    // L.layerGroup for km labels
+let drawSearchTimer  = null;    // debounce timer for Nominatim search
+
 // ── Bootstrap ────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   initMap();
@@ -1169,6 +1176,99 @@ function renderClimbs(climbs) {
   }
 }
 
+// ── Polyline-6 decoder (Valhalla shape format) ───────────────
+// Valhalla returns route geometry as Google encoded polyline with precision 6.
+function decodePolyline6(encoded) {
+  const coords = [];
+  let index = 0, lat = 0, lng = 0;
+  while (index < encoded.length) {
+    let shift = 0, result = 0, b;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    shift = result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+    coords.push([lat / 1e6, lng / 1e6]); // [lat, lon]
+  }
+  return coords;
+}
+
+// ── Nominatim geocoder for the search box ───────────────────
+async function searchNominatim(query) {
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&addressdetails=1`;
+  try {
+    const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    if (!res.ok) return;
+    const results = await res.json();
+    showSearchSuggestions(results);
+  } catch (e) {
+    console.warn('Geocode failed:', e.message);
+  }
+}
+
+function showSearchSuggestions(results) {
+  const container = document.getElementById('draw-suggestions');
+  container.innerHTML = '';
+  if (!results.length) {
+    container.innerHTML = '<div class="draw-suggestion-empty">No results found</div>';
+    return;
+  }
+  results.forEach(r => {
+    const item = document.createElement('div');
+    item.className = 'draw-suggestion';
+    // Trim display_name to first 3 parts
+    const name = r.display_name.split(',').slice(0, 3).join(', ');
+    item.textContent = name;
+    item.title = r.display_name;
+    item.addEventListener('mousedown', e => {
+      e.preventDefault(); // prevent input blur before click fires
+      const lat = parseFloat(r.lat), lon = parseFloat(r.lon);
+      drawMap.setView([lat, lon], 13);
+      document.getElementById('draw-search').value = name;
+      document.getElementById('draw-search-clear').style.display = 'block';
+      container.innerHTML = '';
+    });
+    container.appendChild(item);
+  });
+}
+
+// ── km distance markers on the drawn route ───────────────────
+function renderDrawMarkers() {
+  if (!drawMarkersLayer) return;
+  drawMarkersLayer.clearLayers();
+  if (!drawShowMarkers || drawRouteCoords.length < 2) return;
+
+  const dists = [0];
+  for (let i = 1; i < drawRouteCoords.length; i++) {
+    const [la, lo] = drawRouteCoords[i];
+    const [la0, lo0] = drawRouteCoords[i - 1];
+    dists.push(dists[i - 1] + haversine(la0, lo0, la, lo));
+  }
+  const totalM = dists[dists.length - 1];
+
+  let nextMark = 1000; // first label at 1 km
+  for (let i = 1; i < drawRouteCoords.length && nextMark < totalM; i++) {
+    while (nextMark <= dists[i] && nextMark < totalM) {
+      const segLen = dists[i] - dists[i - 1];
+      const t = segLen > 0 ? (nextMark - dists[i - 1]) / segLen : 0;
+      const lat = drawRouteCoords[i - 1][0] + t * (drawRouteCoords[i][0] - drawRouteCoords[i - 1][0]);
+      const lon = drawRouteCoords[i - 1][1] + t * (drawRouteCoords[i][1] - drawRouteCoords[i - 1][1]);
+      const km  = Math.round(nextMark / 1000);
+      L.marker([lat, lon], {
+        icon: L.divIcon({
+          html: `<div class="dist-marker">${km}</div>`,
+          className: '',
+          iconSize: [20, 16],
+          iconAnchor: [10, 8],
+        }),
+        interactive: false,
+        zIndexOffset: -100,
+      }).addTo(drawMarkersLayer);
+      nextMark += 1000;
+    }
+  }
+}
+
 // ── In-app route drawer ───────────────────────────────────────
 function ensureDrawMap() {
   if (drawMap) return;
@@ -1177,8 +1277,66 @@ function ensureDrawMap() {
     attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
     maxZoom: 22, tileSize: 512, zoomOffset: -1,
   }).addTo(drawMap);
-  drawRouteLayer = L.layerGroup().addTo(drawMap);
+  drawRouteLayer   = L.layerGroup().addTo(drawMap);
+  drawMarkersLayer = L.layerGroup().addTo(drawMap);
   drawMap.on('click', e => addWaypoint(e.latlng.lat, e.latlng.lng));
+
+  // ── Activity-type pills ──────────────────────────────────────
+  document.querySelectorAll('#draw-activity-pills .draw-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#draw-activity-pills .draw-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      drawProfile = btn.dataset.value;
+      if (drawWaypoints.length >= 2 && !drawManualMode) recalculateRoute();
+    });
+  });
+
+  // ── Manual mode toggle ───────────────────────────────────────
+  document.getElementById('draw-manual-toggle').addEventListener('change', e => {
+    drawManualMode = e.target.checked;
+    if (drawWaypoints.length >= 2) recalculateRoute();
+    else updateDrawStats();
+  });
+
+  // ── km markers toggle ────────────────────────────────────────
+  document.getElementById('draw-markers-toggle').addEventListener('change', e => {
+    drawShowMarkers = e.target.checked;
+    renderDrawMarkers();
+  });
+
+  // ── Location search ──────────────────────────────────────────
+  const searchInput = document.getElementById('draw-search');
+  const searchClear = document.getElementById('draw-search-clear');
+  const suggestions = document.getElementById('draw-suggestions');
+
+  searchInput.addEventListener('input', () => {
+    const q = searchInput.value.trim();
+    searchClear.style.display = q ? 'block' : 'none';
+    clearTimeout(drawSearchTimer);
+    if (!q) { suggestions.innerHTML = ''; return; }
+    drawSearchTimer = setTimeout(() => searchNominatim(q), 320);
+  });
+
+  searchInput.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      searchInput.value = '';
+      searchClear.style.display = 'none';
+      suggestions.innerHTML = '';
+    }
+  });
+
+  searchClear.addEventListener('click', () => {
+    searchInput.value = '';
+    searchClear.style.display = 'none';
+    suggestions.innerHTML = '';
+    searchInput.focus();
+  });
+
+  // Close suggestions when clicking outside the search wrap
+  document.addEventListener('click', e => {
+    const wrap = document.getElementById('draw-search-wrap');
+    if (wrap && !wrap.contains(e.target)) suggestions.innerHTML = '';
+  });
 
   // Try to centre on user's location
   if (navigator.geolocation) {
@@ -1226,6 +1384,7 @@ function removeWaypoint(wp) {
   if (drawWaypoints.length >= 2) recalculateRoute();
   else {
     drawRouteLayer.clearLayers();
+    drawMarkersLayer && drawMarkersLayer.clearLayers();
     drawRouteCoords = [];
     drawTotalKm = 0;
   }
@@ -1240,14 +1399,50 @@ function undoDraw() {
 function clearDraw() {
   drawWaypoints.forEach(w => drawMap && drawMap.removeLayer(w.marker));
   drawWaypoints = [];
-  drawRouteLayer && drawRouteLayer.clearLayers();
+  drawRouteLayer   && drawRouteLayer.clearLayers();
+  drawMarkersLayer && drawMarkersLayer.clearLayers();
   drawRouteCoords = [];
   drawTotalKm = 0;
   updateDrawStats();
 }
 
+// Dispatcher: route according to current mode & profile
 async function recalculateRoute() {
   if (drawWaypoints.length < 2) return;
+
+  if (drawManualMode) {
+    // Manual mode: straight lines between waypoints, no snapping
+    drawRouteCoords = drawWaypoints.map(w => [w.lat, w.lon]);
+    drawTotalKm = 0;
+    for (let i = 1; i < drawRouteCoords.length; i++) {
+      drawTotalKm += haversine(
+        drawRouteCoords[i - 1][0], drawRouteCoords[i - 1][1],
+        drawRouteCoords[i][0],     drawRouteCoords[i][1]
+      ) / 1000;
+    }
+    drawRouteLayer.clearLayers();
+    L.polyline(drawRouteCoords, {
+      color: '#1d4ed8', weight: 5, opacity: 0.9, lineJoin: 'round', dashArray: '10,6',
+    }).addTo(drawRouteLayer);
+    renderDrawMarkers();
+    updateDrawStats();
+    return;
+  }
+
+  if (drawProfile === 'gravel' || drawProfile === 'mtb') {
+    setLoading(true, 50, 'Routing (Valhalla)…');
+    try { await recalculateValhalla(); }
+    catch (e) { showToast('Routing failed: ' + e.message, 'error'); }
+    finally   { setLoading(false); }
+  } else {
+    await recalculateOSRM();
+  }
+  renderDrawMarkers();
+  updateDrawStats();
+}
+
+// OSRM road-bike routing (reliable, Road profile)
+async function recalculateOSRM() {
   const coords = drawWaypoints.map(w => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join(';');
   const url = `https://routing.openstreetmap.de/routed-bike/route/v1/driving/${coords}?overview=full&geometries=geojson`;
   try {
@@ -1271,16 +1466,68 @@ async function recalculateRoute() {
   }
 }
 
+// Valhalla routing for Gravel / MTB profiles
+async function recalculateValhalla() {
+  const bikePref = drawProfile === 'mtb'
+    ? { bicycle_type: 'Mountain', use_roads: 0.1, use_trails: 0.9, use_hills: 0.9 }
+    : { bicycle_type: 'Cross',    use_roads: 0.4, use_trails: 0.7, use_hills: 0.6 };
+
+  const body = {
+    locations: drawWaypoints.map(w => ({ lon: w.lon, lat: w.lat })),
+    costing: 'bicycle',
+    costing_options: { bicycle: bikePref },
+    directions_type: 'none',
+  };
+
+  const res = await fetch('https://valhalla1.openstreetmap.de/route', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    // Fall back to OSRM on Valhalla error
+    showToast(`Valhalla unavailable (${res.status}), using road routing`, 'error');
+    await recalculateOSRM();
+    return;
+  }
+  const data = await res.json();
+  if (!data.trip?.legs?.length) throw new Error('No route from Valhalla');
+
+  // Decode and concatenate all leg shapes (polyline6)
+  const allCoords = [];
+  for (const leg of data.trip.legs) {
+    const coords = decodePolyline6(leg.shape);
+    if (allCoords.length) coords.shift(); // remove duplicate junction point
+    allCoords.push(...coords);
+  }
+  drawRouteCoords = allCoords;
+  drawTotalKm = 0;
+  for (let i = 1; i < drawRouteCoords.length; i++) {
+    drawTotalKm += haversine(
+      drawRouteCoords[i - 1][0], drawRouteCoords[i - 1][1],
+      drawRouteCoords[i][0],     drawRouteCoords[i][1]
+    ) / 1000;
+  }
+
+  drawRouteLayer.clearLayers();
+  L.polyline(drawRouteCoords, {
+    color: '#1d4ed8', weight: 5, opacity: 0.9, lineJoin: 'round',
+  }).addTo(drawRouteLayer);
+}
+
 function updateDrawStats() {
   const el  = document.getElementById('draw-stats');
   const btn = document.getElementById('draw-save');
   if (!el || !btn) return;
   if (drawWaypoints.length === 0) {
-    el.textContent = 'Tap the map to add waypoints — cycling routes snap to roads.';
+    el.textContent = drawManualMode
+      ? 'Manual mode: click to place waypoints, joined with straight lines.'
+      : 'Tap the map to add waypoints — cycling routes snap to roads.';
   } else if (drawWaypoints.length === 1) {
     el.textContent = '1 waypoint set — add at least 1 more.';
   } else {
-    el.textContent = `${drawWaypoints.length} waypoints · ${drawTotalKm.toFixed(1)} km · click a marker to remove`;
+    const modeTag = drawManualMode ? ' · manual' : '';
+    el.textContent = `${drawWaypoints.length} waypoints · ${drawTotalKm.toFixed(1)} km${modeTag} · click a marker to remove`;
   }
   btn.disabled = drawRouteCoords.length < 2;
 }
