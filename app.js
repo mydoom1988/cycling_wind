@@ -379,6 +379,17 @@ async function analyzeWind(pts) {
   renderCoachCard(results, totalDist, speed);
   renderWeatherSummary(results);
   renderPacingStrategy(results, lastClimbs);
+
+  // New coaching features
+  renderPowerProfile(results);
+  analyzeLoopDirection(routePoints, results);
+  const validPow = results.filter(r => r.power != null);
+  if (validPow.length) {
+    const avgP = validPow.reduce((s, r) => s + r.power, 0) / validPow.length;
+    renderGroupComparison(avgP);
+  }
+  renderNutritionSchedule(results, totalDist, speed);
+
   renderWindOverlay(pts, rideTime);
   showToast(`ECMWF wind & weather loaded (${valid.length} pts)`, 'success');
 }
@@ -1636,6 +1647,261 @@ ${trkpts}
     map.fitBounds(L.polyline(routePoints.map(p => [p.lat, p.lon])).getBounds(), { padding: [50, 50] });
   });
   showToast('Route saved — hit Analyze ↑', 'success');
+}
+
+// ── Power-along-route chart ───────────────────────────────────
+function renderPowerProfile(results) {
+  const panel = document.getElementById('power-panel');
+  const svg   = document.getElementById('power-svg');
+  if (!panel || !svg) return;
+
+  const valid = results.filter(r => r.power != null);
+  if (valid.length < 2) { panel.classList.add('hidden'); return; }
+
+  const ftp    = riderFTP();
+  const totalM = valid[valid.length - 1].distFromStart;
+  const maxP   = Math.max(...valid.map(r => r.power)) * 1.08;
+  const ceil   = Math.max(maxP, ftp * 1.1);
+
+  const W = 1000, H = 88;
+  const padL = 44, padR = 32, padT = 8, padB = 22;
+  const cW = W - padL - padR, cH = H - padT - padB;
+
+  const xOf = d => padL + (d / totalM) * cW;
+  const yOf = p => padT + cH - (p / ceil) * cH;
+
+  // Zone thresholds (fraction of FTP) → fill colour
+  const zoneColor = p => {
+    const f = p / ftp;
+    if (f < 0.55) return '#475569';  // Z1 recovery
+    if (f < 0.75) return '#1d4ed8';  // Z2 endurance
+    if (f < 0.90) return '#16a34a';  // Z3 tempo
+    if (f < 1.05) return '#d97706';  // Z4 threshold
+    return '#dc2626';                 // Z5+ VO₂max
+  };
+
+  const baseY = (padT + cH).toFixed(1);
+
+  // Filled polygons between consecutive samples
+  let segs = '';
+  for (let i = 0; i < valid.length - 1; i++) {
+    const a = valid[i], b = valid[i + 1];
+    const x1 = xOf(a.distFromStart).toFixed(1), y1 = yOf(a.power).toFixed(1);
+    const x2 = xOf(b.distFromStart).toFixed(1), y2 = yOf(b.power).toFixed(1);
+    segs += `<polygon points="${x1},${baseY} ${x1},${y1} ${x2},${y2} ${x2},${baseY}" fill="${zoneColor(a.power)}" opacity="0.8"/>`;
+  }
+
+  // Outline polyline for crispness
+  const outline = valid.map(r => `${xOf(r.distFromStart).toFixed(1)},${yOf(r.power).toFixed(1)}`).join(' ');
+
+  // FTP dashed reference line
+  const ftpY = yOf(ftp).toFixed(1);
+  const ftpLine = `
+    <line x1="${padL}" y1="${ftpY}" x2="${padL + cW}" y2="${ftpY}" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="5,3" opacity="0.9"/>
+    <text x="${padL + cW + 3}" y="${ftpY}" fill="#f59e0b" font-size="9" dominant-baseline="middle">FTP</text>`;
+
+  // X axis (km labels)
+  const kmStep = Math.ceil((totalM / 1000) / 10) || 1;
+  const xTicks = [];
+  for (let km = 0; km <= totalM / 1000; km += kmStep) {
+    const x = xOf(km * 1000).toFixed(1);
+    xTicks.push(`<line x1="${x}" y1="${padT}" x2="${x}" y2="${padT + cH}" stroke="#334155" stroke-width="0.5"/>
+      <text x="${x}" y="${H - 5}" fill="#64748b" font-size="9" text-anchor="middle">${km}</text>`);
+  }
+
+  // Y axis (watt labels)
+  const yVals = [...new Set([0, Math.round(ftp * 0.5), ftp, Math.round(ceil * 0.9)])];
+  const yTicks = yVals.map(p => {
+    const y = yOf(p).toFixed(1);
+    return `<line x1="${padL}" y1="${y}" x2="${padL + cW}" y2="${y}" stroke="#334155" stroke-width="0.5"/>
+      <text x="${padL - 4}" y="${y}" fill="#64748b" font-size="9" text-anchor="end" dominant-baseline="middle">${p}</text>`;
+  });
+
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = `
+    ${xTicks.join('')}${yTicks.join('')}
+    ${segs}
+    <polyline points="${outline}" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1" stroke-linejoin="round"/>
+    ${ftpLine}
+    <line id="pow-cursor" x1="0" y1="${padT}" x2="0" y2="${padT + cH}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2" opacity="0"/>
+  `;
+
+  // Stats header
+  const avgP = Math.round(valid.reduce((s, r) => s + r.power, 0) / valid.length);
+  const peakP = Math.round(Math.max(...valid.map(r => r.power)));
+  document.getElementById('power-stats').textContent = `Power — avg ${avgP} W · peak ${peakP} W · FTP ${ftp} W`;
+  panel.classList.remove('hidden');
+
+  // Hover tooltip (reuse .elev-tooltip style)
+  let tip = document.querySelector('.power-tooltip');
+  if (!tip) { tip = document.createElement('div'); tip.className = 'elev-tooltip power-tooltip'; document.body.appendChild(tip); }
+
+  const zoneName = p => {
+    const f = p / ftp;
+    return f < 0.55 ? 'Z1 Recovery' : f < 0.75 ? 'Z2 Endurance' : f < 0.90 ? 'Z3 Tempo' : f < 1.05 ? 'Z4 Threshold' : 'Z5 VO₂max';
+  };
+
+  svg.onmousemove = e => {
+    const rect = svg.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, ((e.clientX - rect.left) / rect.width * W - padL) / cW));
+    const dist = frac * totalM;
+    let nearest = valid[0], minD = Infinity;
+    valid.forEach(r => { const d = Math.abs(r.distFromStart - dist); if (d < minD) { minD = d; nearest = r; } });
+    const cx = xOf(nearest.distFromStart).toFixed(1);
+    const cursor = document.getElementById('pow-cursor');
+    cursor.setAttribute('x1', cx); cursor.setAttribute('x2', cx); cursor.setAttribute('opacity', '1');
+    tip.textContent = `${(nearest.distFromStart / 1000).toFixed(1)} km · ${Math.round(nearest.power)} W · ${zoneName(nearest.power)}`;
+    tip.style.cssText = `display:block;left:${e.clientX + 14}px;top:${e.clientY - 28}px`;
+  };
+  svg.onmouseleave = () => {
+    document.getElementById('pow-cursor').setAttribute('opacity', '0');
+    tip.style.display = 'none';
+  };
+
+  document.getElementById('power-toggle').onclick = () => {
+    panel.classList.toggle('collapsed');
+    document.getElementById('power-toggle').classList.toggle('collapsed');
+    map.invalidateSize();
+  };
+}
+
+// ── Loop direction analyser ────────────────────────────────────
+function analyzeLoopDirection(pts, results) {
+  const card = document.getElementById('loop-card');
+  if (!card) return;
+
+  // Only show for loops (start within 2.5 km of finish)
+  const closingM = haversine(pts[0].lat, pts[0].lon, pts[pts.length - 1].lat, pts[pts.length - 1].lon);
+  if (closingM > 2500) { card.classList.add('hidden'); return; }
+
+  const valid = results.filter(r => r.wind && r.headwindMs != null);
+  if (!valid.length) { card.classList.add('hidden'); return; }
+
+  // Forward score: sum of headwind components (positive = tailwind is good)
+  const fwdScore = valid.reduce((s, r) => s + r.headwindMs, 0);
+
+  // Reversed: flip each bearing 180°, recompute headwind with same wind data
+  const revScore = valid.reduce((s, r) => {
+    return s + headwind(r.wind.speed, r.wind.dir, (r.bearing + 180) % 360);
+  }, 0);
+
+  const fwdAvg = (fwdScore / valid.length).toFixed(1);
+  const revAvg = (revScore / valid.length).toFixed(1);
+  const diff   = Math.abs(fwdScore - revScore);
+
+  const rec = document.getElementById('loop-recommendation');
+  if (diff < valid.length * 0.3) {
+    rec.innerHTML = `<div class="loop-row loop-neutral">Both directions have similar wind resistance.</div>`;
+  } else if (fwdScore >= revScore) {
+    rec.innerHTML = `
+      <div class="loop-row loop-good">✓ Current direction is better</div>
+      <div class="loop-detail">Net wind assist: <strong>+${fwdAvg} m/s</strong> this way vs ${revAvg} m/s reversed.</div>`;
+  } else {
+    rec.innerHTML = `
+      <div class="loop-row loop-warn">↺ Reverse for better wind</div>
+      <div class="loop-detail">Net wind assist reversed: <strong>+${revAvg} m/s</strong> vs ${fwdAvg} m/s current direction. Hit <strong>Reverse</strong> above.</div>`;
+  }
+  card.classList.remove('hidden');
+}
+
+// ── Nutrition & hydration schedule ────────────────────────────
+function renderNutritionSchedule(results, totalDistM, speedKmh) {
+  const card = document.getElementById('nutrition-card');
+  const list = document.getElementById('nutrition-timeline');
+  if (!card || !list) return;
+
+  const valid = results.filter(r => r.power != null);
+  if (!valid.length) { card.classList.add('hidden'); return; }
+
+  const ftp      = riderFTP();
+  const totalMin = (totalDistM / 1000 / speedKmh) * 60;
+
+  // Helper: find intensity at a given km
+  const intensityAt = km => {
+    const r = valid.reduce((best, r) =>
+      Math.abs(r.distFromStart - km * 1000) < Math.abs(best.distFromStart - km * 1000) ? r : best, valid[0]);
+    return r.power / ftp;
+  };
+
+  // Build schedule
+  const items = [{ km: -1, icon: '☕', label: 'Pre-ride', detail: 'Meal 2–3 h before · 20–30 g carbs 30 min before start' }];
+
+  // Interleave eat (every 30 min) and drink (every 20 min) events
+  const events = [];
+  for (let t = 20; t < totalMin; t += 20) events.push({ t, type: 'drink' });
+  for (let t = 30; t < totalMin; t += 30) events.push({ t, type: 'eat' });
+  events.sort((a, b) => a.t - b.t);
+
+  // Merge eat+drink events within 6 min of each other
+  const merged = [];
+  for (const ev of events) {
+    const prev = merged[merged.length - 1];
+    if (prev && Math.abs(prev.t - ev.t) <= 6) { prev.type = 'both'; }
+    else merged.push({ ...ev });
+  }
+
+  for (const ev of merged) {
+    const km = (ev.t / 60) * speedKmh;
+    if (km >= totalDistM / 1000 - 1) continue;
+    const intensity = intensityAt(km);
+    const isHard = intensity > 0.85;
+
+    if (ev.type === 'both') {
+      items.push({ km, icon: '🎯',
+        label: isHard ? 'Gel + bottle' : 'Bar + bottle',
+        detail: isHard ? '~25 g fast carbs · 500 ml electrolytes' : '30–40 g carbs · 500 ml water' });
+    } else if (ev.type === 'eat') {
+      items.push({ km, icon: isHard ? '🍬' : '🍌',
+        label: isHard ? 'Gel' : 'Bar / chews',
+        detail: isHard ? '~25 g fast carbs (high intensity)' : '~30–40 g carbs' });
+    } else {
+      items.push({ km, icon: '💧', label: 'Drink', detail: '~500 ml water or electrolytes' });
+    }
+  }
+  items.push({ km: totalDistM / 1000 + 1, icon: '🏁', label: 'Recovery', detail: 'Within 30 min: 20–25 g protein + 60–80 g carbs' });
+
+  const totalKm = totalDistM / 1000;
+  list.innerHTML = items.map(s => {
+    const kmLabel = s.km < 0 ? 'Pre' : s.km > totalKm ? 'Post' : `km ${Math.round(s.km)}`;
+    return `<div class="nutrition-item">
+      <span class="nutrition-km">${kmLabel}</span>
+      <div class="nutrition-body">
+        <span class="nutrition-icon">${s.icon}</span>
+        <div class="nutrition-text">
+          <span class="nutrition-label">${s.label}</span>
+          <span class="nutrition-detail">${s.detail}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  card.classList.remove('hidden');
+}
+
+// ── Group size power comparison ───────────────────────────────
+function renderGroupComparison(avgPower) {
+  const card = document.getElementById('group-card');
+  const el   = document.getElementById('group-comparison');
+  if (!card || !el) return;
+
+  // Aero savings are expressed as average power multiplier for a rider in that group
+  // (mix of pulling and drafting positions, real-world typical values)
+  const configs = [
+    { label: 'Solo',    emoji: '🚴', mult: 1.00, note: 'full aero drag' },
+    { label: 'Pair',    emoji: '👥', mult: 0.85, note: '~15% saved avg' },
+    { label: 'Group',   emoji: '🚵', mult: 0.72, note: '~28% saved (5–8)' },
+    { label: 'Peloton', emoji: '🏆', mult: 0.60, note: '~40% saved (20+)' },
+  ];
+
+  el.innerHTML = configs.map((c, i) => `
+    <div class="group-item${i === 0 ? ' group-item-solo' : ''}">
+      <div class="group-emoji">${c.emoji}</div>
+      <div class="group-label">${c.label}</div>
+      <div class="group-power">${Math.round(avgPower * c.mult)}<span class="group-unit"> W</span></div>
+      <div class="group-note">${c.note}</div>
+    </div>`).join('');
+
+  card.classList.remove('hidden');
 }
 
 // ── UI helpers ────────────────────────────────────────────────

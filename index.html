@@ -166,6 +166,24 @@
         <ul id="pacing-list" class="pacing-list"></ul>
       </div>
 
+      <!-- Loop direction recommendation -->
+      <div id="loop-card" class="card hidden">
+        <label class="field-label">Loop Direction</label>
+        <div id="loop-recommendation"></div>
+      </div>
+
+      <!-- Group size vs solo power -->
+      <div id="group-card" class="card hidden">
+        <label class="field-label">Group Size — Avg Power</label>
+        <div id="group-comparison" class="group-grid"></div>
+      </div>
+
+      <!-- Nutrition & hydration schedule -->
+      <div id="nutrition-card" class="card hidden">
+        <label class="field-label">Nutrition Schedule</label>
+        <div id="nutrition-timeline" class="nutrition-list"></div>
+      </div>
+
       <div class="section-header collapsible" id="wind-table-header">
         <span class="section-title">Wind Along Route</span>
         <button id="wind-table-toggle" class="section-toggle" title="Show / hide list">▾</button>
@@ -244,6 +262,15 @@
     <!-- Wind tab: Leaflet map -->
     <div id="tab-wind" class="tab-pane hidden">
       <div id="map"></div>
+      <!-- Power-along-route chart (shown after wind analysis) -->
+      <div id="power-panel" class="hidden">
+        <div id="power-header">
+          <span id="power-stats"></span>
+          <button id="power-toggle" title="Toggle power profile">▾</button>
+        </div>
+        <svg id="power-svg" preserveAspectRatio="none"></svg>
+      </div>
+
       <div id="elevation-panel" class="hidden">
         <div id="elevation-header">
           <span id="elevation-stats"></span>
