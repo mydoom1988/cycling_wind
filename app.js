@@ -25,7 +25,6 @@ let drawTotalKm     = 0;
 
 // Draw routing preferences
 let drawProfile      = 'road';  // 'road' | 'gravel' | 'mtb'
-let drawManualMode   = false;   // straight-line vs road-snapped routing
 let drawShowMarkers  = false;   // show km distance markers on route
 let drawMarkersLayer = null;    // L.layerGroup for km labels
 let drawSearchTimer  = null;    // debounce timer for Nominatim search
@@ -61,10 +60,10 @@ function switchTab(name) {
 function initMap() {
   map = L.map('map', { center: [50, 10], zoom: 5 });
 
-  const windSatellite = L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      attribution: '© <a href="https://www.esri.com/">Esri</a> World Imagery',
-      maxZoom: 19,
+  const windOutdoor = L.tileLayer(
+    `https://api.maptiler.com/maps/outdoor/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`, {
+      attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+      maxZoom: 22, tileSize: 512, zoomOffset: -1,
     }
   );
 
@@ -77,9 +76,9 @@ function initMap() {
 
   // Base-layer control — overlays (rain) are added later in setupRainLayer()
   windLayerCtrl = L.control.layers(
-    { '🛰 Satellite': windSatellite, '🛰 Hybrid': windHybrid },
+    { '🛰 Hybrid': windHybrid, '🗺 Outdoor': windOutdoor },
     {},
-    { collapsed: false, position: 'topleft' }
+    { collapsed: true, position: 'topleft' }
   ).addTo(map);
 
   routeLayer      = L.layerGroup().addTo(map);
@@ -1226,6 +1225,18 @@ async function searchNominatim(query) {
 
 function showSearchSuggestions(results) {
   const container = document.getElementById('draw-suggestions');
+  const wrap      = document.getElementById('draw-search-wrap');
+
+  // Use fixed positioning so the dropdown escapes any overflow:hidden ancestor
+  const rect = wrap.getBoundingClientRect();
+  Object.assign(container.style, {
+    position: 'fixed',
+    top:      (rect.bottom + 2) + 'px',
+    left:     rect.left + 'px',
+    width:    rect.width + 'px',
+    zIndex:   '9999',
+  });
+
   container.innerHTML = '';
   if (!results.length) {
     container.innerHTML = '<div class="draw-suggestion-empty">No results found</div>';
@@ -1234,12 +1245,11 @@ function showSearchSuggestions(results) {
   results.forEach(r => {
     const item = document.createElement('div');
     item.className = 'draw-suggestion';
-    // Trim display_name to first 3 parts
     const name = r.display_name.split(',').slice(0, 3).join(', ');
     item.textContent = name;
     item.title = r.display_name;
     item.addEventListener('mousedown', e => {
-      e.preventDefault(); // prevent input blur before click fires
+      e.preventDefault(); // prevent input blur firing before mousedown
       const lat = parseFloat(r.lat), lon = parseFloat(r.lon);
       drawMap.setView([lat, lon], 13);
       document.getElementById('draw-search').value = name;
@@ -1292,10 +1302,10 @@ function ensureDrawMap() {
   if (drawMap) return;
   drawMap = L.map('draw-map', { center: [55.0, 24.0], zoom: 8 });
 
-  const drawSatellite = L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      attribution: '© <a href="https://www.esri.com/">Esri</a> World Imagery',
-      maxZoom: 19,
+  const drawOutdoor = L.tileLayer(
+    `https://api.maptiler.com/maps/outdoor/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`, {
+      attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+      maxZoom: 22, tileSize: 512, zoomOffset: -1,
     }
   );
 
@@ -1307,7 +1317,7 @@ function ensureDrawMap() {
   ).addTo(drawMap);
 
   L.control.layers(
-    { '🛰 Satellite': drawSatellite, '🛰 Hybrid': drawHybrid },
+    { '🛰 Hybrid': drawHybrid, '🗺 Outdoor': drawOutdoor },
     {},
     { collapsed: true, position: 'topright' }
   ).addTo(drawMap);
@@ -1323,13 +1333,6 @@ function ensureDrawMap() {
       drawProfile = btn.dataset.value;
       if (drawWaypoints.length >= 2 && !drawManualMode) recalculateRoute();
     });
-  });
-
-  // ── Manual mode toggle ───────────────────────────────────────
-  document.getElementById('draw-manual-toggle').addEventListener('change', e => {
-    drawManualMode = e.target.checked;
-    if (drawWaypoints.length >= 2) recalculateRoute();
-    else updateDrawStats();
   });
 
   // ── km markers toggle ────────────────────────────────────────
@@ -1440,28 +1443,9 @@ function clearDraw() {
   updateDrawStats();
 }
 
-// Dispatcher: route according to current mode & profile
+// Route dispatcher — Road uses OSRM, Gravel/MTB use Valhalla
 async function recalculateRoute() {
   if (drawWaypoints.length < 2) return;
-
-  if (drawManualMode) {
-    // Manual mode: straight lines between waypoints, no snapping
-    drawRouteCoords = drawWaypoints.map(w => [w.lat, w.lon]);
-    drawTotalKm = 0;
-    for (let i = 1; i < drawRouteCoords.length; i++) {
-      drawTotalKm += haversine(
-        drawRouteCoords[i - 1][0], drawRouteCoords[i - 1][1],
-        drawRouteCoords[i][0],     drawRouteCoords[i][1]
-      ) / 1000;
-    }
-    drawRouteLayer.clearLayers();
-    L.polyline(drawRouteCoords, {
-      color: '#1d4ed8', weight: 5, opacity: 0.9, lineJoin: 'round', dashArray: '10,6',
-    }).addTo(drawRouteLayer);
-    renderDrawMarkers();
-    updateDrawStats();
-    return;
-  }
 
   if (drawProfile === 'gravel' || drawProfile === 'mtb') {
     setLoading(true, 50, 'Routing (Valhalla)…');
@@ -1554,14 +1538,11 @@ function updateDrawStats() {
   const btn = document.getElementById('draw-save');
   if (!el || !btn) return;
   if (drawWaypoints.length === 0) {
-    el.textContent = drawManualMode
-      ? 'Manual mode: click to place waypoints, joined with straight lines.'
-      : 'Tap the map to add waypoints — cycling routes snap to roads.';
+    el.textContent = 'Tap the map to add waypoints — routes snap to roads.';
   } else if (drawWaypoints.length === 1) {
-    el.textContent = '1 waypoint set — add at least 1 more.';
+    el.textContent = '1 waypoint — add at least 1 more.';
   } else {
-    const modeTag = drawManualMode ? ' · manual' : '';
-    el.textContent = `${drawWaypoints.length} waypoints · ${drawTotalKm.toFixed(1)} km${modeTag} · click a marker to remove`;
+    el.textContent = `${drawWaypoints.length} waypoints · ${drawTotalKm.toFixed(1)} km · click a marker to remove`;
   }
   btn.disabled = drawRouteCoords.length < 2;
 }
