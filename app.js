@@ -15,6 +15,14 @@ let lastResults    = [];   // sampled points with wind+weather, cached
 let lastClimbs     = [];   // detected climbs on current route
 let velocityLayer  = null; // live wind particles overlay
 let windLayerCtrl  = null; // Leaflet layers control (wind-analysis map)
+let lastWindTime   = null; // atTime used for the last wind grid fetch (for re-render on pan/zoom)
+let windMoveTimer  = null; // debounce timer for map moveend re-render
+
+// Shared chart-scrub state (elevation ↔ power ↔ map sync)
+let _scrubBikeMarker = null;
+const _scrubBikeIcon = () => L.divIcon({ html: '<div class="bike-marker">🚴</div>', className: '', iconSize: [30, 26], iconAnchor: [15, 13] });
+let _elevMeta  = null;  // set by renderElevationProfile
+let _powerMeta = null;  // set by renderPowerProfile
 
 // In-app route drawer state
 let drawMap         = null;
@@ -258,6 +266,7 @@ function displayRoute(pts) {
   routeLayer.clearLayers();
   markersLayer.clearLayers();
   if (velocityLayer) { map.removeLayer(velocityLayer); velocityLayer = null; }
+  lastWindTime = null;
 
   windRouteLayer.clearLayers();
 
@@ -401,9 +410,23 @@ async function renderWindOverlay(pts, atTime) {
     showToast('Live wind layer unavailable (plugin not loaded)', 'error');
     return;
   }
+  lastWindTime = atTime;
+  await _applyWindGrid(atTime);
+}
+
+async function _applyWindGrid(atTime) {
   try {
-    const bounds = L.latLngBounds(pts.map(p => [p.lat, p.lon]));
-    const data = await loadWindGrid(bounds, atTime);
+    // Use a large fixed extent centred on the route so the grid boundary is
+    // never visible at any normal cycling zoom level (~±550 km / 5° each way).
+    // Viewport-based bounds always expose a rectangle when the user zooms out.
+    const center = routePoints.length
+      ? L.latLngBounds(routePoints.map(p => [p.lat, p.lon])).getCenter()
+      : map.getCenter();
+    const fixedBounds = L.latLngBounds(
+      [center.lat - 5, center.lng - 7],   // SW corner — ~550 km radius
+      [center.lat + 5, center.lng + 7]    // NE corner
+    );
+    const data = await loadWindGrid(fixedBounds, atTime);
     if (velocityLayer) { map.removeLayer(velocityLayer); velocityLayer = null; }
     velocityLayer = L.velocityLayer({
       displayValues: true,
@@ -429,10 +452,9 @@ async function renderWindOverlay(pts, atTime) {
       ],
     });
     velocityLayer.addTo(map);
-    console.log('Live wind layer added with', data[0].data.length, 'grid points');
+    console.log('Wind grid refreshed:', data[0].data.length, 'pts, bounds', map.getBounds().toBBoxString());
   } catch (e) {
     console.warn('Live wind overlay failed:', e.message);
-    showToast('Live wind layer failed: ' + e.message, 'error');
   }
 }
 
@@ -442,14 +464,9 @@ async function loadWindGrid(bounds, atTime) {
   const sw = bounds.getSouthWest();
   const ne = bounds.getNorthEast();
 
-  // Cover a generous region around the route so particles fill the visible map
-  // even after the user pans/zooms. At minimum ~250 km square; otherwise route + 100%.
-  const centerLat = (sw.lat + ne.lat) / 2;
-  const centerLon = (sw.lng + ne.lng) / 2;
-  const halfLat = Math.max(1.1, (ne.lat - sw.lat));            // ~120 km min
-  const halfLon = Math.max(1.6, (ne.lng - sw.lng));            // ~110 km min @ 45°N
-  const minLat = centerLat - halfLat, maxLat = centerLat + halfLat;
-  const minLon = centerLon - halfLon, maxLon = centerLon + halfLon;
+  // Use the bounds directly — caller already passes viewport bounds (padded)
+  const minLat = sw.lat, maxLat = ne.lat;
+  const minLon = sw.lng, maxLon = ne.lng;
   const dx = (maxLon - minLon) / (COLS - 1);
   const dy = (maxLat - minLat) / (ROWS - 1);
 
@@ -672,6 +689,42 @@ function renderTable(results) {
   document.getElementById('wind-section').classList.remove('hidden');
 }
 
+// ── Shared chart scrub (elevation ↔ power ↔ map) ─────────────
+function scrubRoute(distM) {
+  // Update elevation cursor
+  if (_elevMeta) {
+    const { dists, pts, xOf } = _elevMeta;
+    let ni = 0, minD = Infinity;
+    dists.forEach((d, i) => { const diff = Math.abs(d - distM); if (diff < minD && pts[i].ele != null) { minD = diff; ni = i; } });
+    const cx = xOf(dists[ni]).toFixed(1);
+    const ec = document.getElementById('elev-cursor');
+    if (ec) { ec.setAttribute('x1', cx); ec.setAttribute('x2', cx); ec.setAttribute('opacity', '1'); }
+    // Update map bike marker
+    const latlng = [pts[ni].lat, pts[ni].lon];
+    if (!_scrubBikeMarker) {
+      _scrubBikeMarker = L.marker(latlng, { icon: _scrubBikeIcon(), interactive: false, zIndexOffset: 1000 }).addTo(map);
+    } else {
+      _scrubBikeMarker.setLatLng(latlng);
+    }
+  }
+  // Update power cursor
+  if (_powerMeta) {
+    const { valid, xOf } = _powerMeta;
+    let nr = valid[0], minD = Infinity;
+    valid.forEach(r => { const d = Math.abs(r.distFromStart - distM); if (d < minD) { minD = d; nr = r; } });
+    const cx = xOf(nr.distFromStart).toFixed(1);
+    const pc = document.getElementById('pow-cursor');
+    if (pc) { pc.setAttribute('x1', cx); pc.setAttribute('x2', cx); pc.setAttribute('opacity', '1'); }
+  }
+}
+function clearScrub() {
+  const ec = document.getElementById('elev-cursor');
+  const pc = document.getElementById('pow-cursor');
+  if (ec) ec.setAttribute('opacity', '0');
+  if (pc) pc.setAttribute('opacity', '0');
+  if (_scrubBikeMarker) { map.removeLayer(_scrubBikeMarker); _scrubBikeMarker = null; }
+}
+
 // ── Elevation profile ─────────────────────────────────────────
 function renderElevationProfile(pts) {
   const panel = document.getElementById('elevation-panel');
@@ -709,6 +762,9 @@ function renderElevationProfile(pts) {
 
   const xOf = d  => padL + (d / totalM) * cW;
   const yOf = e  => padT + cH - ((e - minE) / rangeE) * cH;
+
+  // Store metadata for cross-chart scrub sync
+  _elevMeta = { dists, pts, xOf, totalM };
 
   // Build polyline points and filled path
   const ptPairs = pts
@@ -752,59 +808,34 @@ function renderElevationProfile(pts) {
 
   panel.classList.remove('hidden');
 
-  // Bike marker on map
-  const bikeIcon = L.divIcon({
-    html: '<div class="bike-marker">🚴</div>',
-    className: '',
-    iconSize:   [30, 26],
-    iconAnchor: [15, 13],
-  });
-  let bikeMarker = null;
-
   // Hover tooltip
   let tooltip = document.querySelector('.elev-tooltip');
   if (!tooltip) { tooltip = document.createElement('div'); tooltip.className = 'elev-tooltip'; document.body.appendChild(tooltip); }
 
   svg.onmousemove = e => {
     const rect  = svg.getBoundingClientRect();
-    const svgX  = (e.clientX - rect.left) / rect.width * W;
-    const frac  = Math.max(0, Math.min(1, (svgX - padL) / cW));
+    const frac  = Math.max(0, Math.min(1, ((e.clientX - rect.left) / rect.width * W - padL) / cW));
     const dist  = frac * totalM;
 
-    // Find nearest point with elevation
+    // Find nearest point with elevation for tooltip text
     let nearest = 0, minDiff = Infinity;
-    dists.forEach((d, i) => {
-      const diff = Math.abs(d - dist);
-      if (diff < minDiff && eles[i] != null) { minDiff = diff; nearest = i; }
-    });
+    dists.forEach((d, i) => { const diff = Math.abs(d - dist); if (diff < minDiff && eles[i] != null) { minDiff = diff; nearest = i; } });
     const ele = eles[nearest];
     if (ele == null) return;
 
-    // Move cursor line
-    const cx = xOf(dists[nearest]).toFixed(1);
-    document.getElementById('elev-cursor').setAttribute('x1', cx);
-    document.getElementById('elev-cursor').setAttribute('x2', cx);
-    document.getElementById('elev-cursor').setAttribute('opacity', '1');
+    // Sync both cursors + map marker via shared function
+    scrubRoute(dists[nearest]);
 
-    // Tooltip
-    tooltip.textContent  = `${(dists[nearest]/1000).toFixed(1)} km · ${Math.round(ele)} m`;
-    tooltip.style.left   = (e.clientX + 14) + 'px';
-    tooltip.style.top    = (e.clientY - 28) + 'px';
+    // Elevation-specific tooltip
+    tooltip.textContent   = `${(dists[nearest]/1000).toFixed(1)} km · ${Math.round(ele)} m`;
+    tooltip.style.left    = (e.clientX + 14) + 'px';
+    tooltip.style.top     = (e.clientY - 28) + 'px';
     tooltip.style.display = 'block';
-
-    // Bike marker
-    const latlng = [pts[nearest].lat, pts[nearest].lon];
-    if (!bikeMarker) {
-      bikeMarker = L.marker(latlng, { icon: bikeIcon, interactive: false, zIndexOffset: 1000 }).addTo(map);
-    } else {
-      bikeMarker.setLatLng(latlng);
-    }
   };
 
   svg.onmouseleave = () => {
-    document.getElementById('elev-cursor').setAttribute('opacity', '0');
     tooltip.style.display = 'none';
-    if (bikeMarker) { map.removeLayer(bikeMarker); bikeMarker = null; }
+    clearScrub();
   };
 
   // Toggle collapse
@@ -1454,15 +1485,18 @@ function clearDraw() {
   updateDrawStats();
 }
 
-// Route dispatcher — Road uses OSRM, Gravel/MTB use Valhalla
+// Route dispatcher — Road uses OSRM, Gravel/MTB use BRouter
 async function recalculateRoute() {
   if (drawWaypoints.length < 2) return;
 
   if (drawProfile === 'gravel' || drawProfile === 'mtb') {
-    setLoading(true, 50, 'Routing (Valhalla)…');
-    try { await recalculateValhalla(); }
-    catch (e) { showToast('Routing failed: ' + e.message, 'error'); }
-    finally   { setLoading(false); }
+    setLoading(true, 50, 'Routing (BRouter)…');
+    try { await recalculateBRouter(); }
+    catch (e) {
+      showToast('BRouter failed, falling back to road routing', 'warn');
+      await recalculateOSRM();
+    }
+    finally { setLoading(false); }
   } else {
     await recalculateOSRM();
   }
@@ -1495,46 +1529,27 @@ async function recalculateOSRM() {
   }
 }
 
-// Valhalla routing for Gravel / MTB profiles
-async function recalculateValhalla() {
-  const bikePref = drawProfile === 'mtb'
-    ? { bicycle_type: 'Mountain', use_roads: 0.1, use_trails: 0.9, use_hills: 0.9 }
-    : { bicycle_type: 'Cross',    use_roads: 0.4, use_trails: 0.7, use_hills: 0.6 };
+// BRouter routing for Gravel / MTB profiles
+// brouter.de has dedicated gravel & mtb profiles and is highly reliable for cycling.
+async function recalculateBRouter() {
+  const profile  = drawProfile === 'mtb' ? 'mtb' : 'gravel';
+  const lonlats  = drawWaypoints.map(w => `${w.lon.toFixed(6)},${w.lat.toFixed(6)}`).join('|');
+  const url      = `https://brouter.de/brouter?lonlats=${lonlats}&profile=${profile}&alternativeidx=0&format=geojson`;
 
-  const body = {
-    locations: drawWaypoints.map(w => ({ lon: w.lon, lat: w.lat })),
-    costing: 'bicycle',
-    costing_options: { bicycle: bikePref },
-    directions_type: 'none',
-  };
-
-  const res = await fetch('https://valhalla1.openstreetmap.de/route', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    // Fall back to OSRM on Valhalla error
-    showToast(`Valhalla unavailable (${res.status}), using road routing`, 'error');
-    await recalculateOSRM();
-    return;
-  }
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`BRouter ${res.status}`);
   const data = await res.json();
-  if (!data.trip?.legs?.length) throw new Error('No route from Valhalla');
 
-  // Decode and concatenate all leg shapes (polyline6)
-  const allCoords = [];
-  for (const leg of data.trip.legs) {
-    const coords = decodePolyline6(leg.shape);
-    if (allCoords.length) coords.shift(); // remove duplicate junction point
-    allCoords.push(...coords);
-  }
-  drawRouteCoords = allCoords;
+  const coords = data.features?.[0]?.geometry?.coordinates;
+  if (!coords?.length) throw new Error('No route from BRouter');
+
+  // BRouter returns [lon, lat, ele] — convert to [lat, lon]
+  drawRouteCoords = coords.map(c => [c[1], c[0]]);
   drawTotalKm = 0;
   for (let i = 1; i < drawRouteCoords.length; i++) {
     drawTotalKm += haversine(
-      drawRouteCoords[i - 1][0], drawRouteCoords[i - 1][1],
-      drawRouteCoords[i][0],     drawRouteCoords[i][1]
+      drawRouteCoords[i-1][0], drawRouteCoords[i-1][1],
+      drawRouteCoords[i][0],   drawRouteCoords[i][1]
     ) / 1000;
   }
 
@@ -1670,6 +1685,9 @@ function renderPowerProfile(results) {
   const xOf = d => padL + (d / totalM) * cW;
   const yOf = p => padT + cH - (p / ceil) * cH;
 
+  // Store metadata for cross-chart scrub sync
+  _powerMeta = { valid, xOf, totalM };
+
   // Zone thresholds (fraction of FTP) → fill colour
   const zoneColor = p => {
     const f = p / ftp;
@@ -1747,15 +1765,17 @@ function renderPowerProfile(results) {
     const dist = frac * totalM;
     let nearest = valid[0], minD = Infinity;
     valid.forEach(r => { const d = Math.abs(r.distFromStart - dist); if (d < minD) { minD = d; nearest = r; } });
-    const cx = xOf(nearest.distFromStart).toFixed(1);
-    const cursor = document.getElementById('pow-cursor');
-    cursor.setAttribute('x1', cx); cursor.setAttribute('x2', cx); cursor.setAttribute('opacity', '1');
+
+    // Sync both cursors + map marker via shared function
+    scrubRoute(nearest.distFromStart);
+
+    // Power-specific tooltip
     tip.textContent = `${(nearest.distFromStart / 1000).toFixed(1)} km · ${Math.round(nearest.power)} W · ${zoneName(nearest.power)}`;
     tip.style.cssText = `display:block;left:${e.clientX + 14}px;top:${e.clientY - 28}px`;
   };
   svg.onmouseleave = () => {
-    document.getElementById('pow-cursor').setAttribute('opacity', '0');
     tip.style.display = 'none';
+    clearScrub();
   };
 
   document.getElementById('power-toggle').onclick = () => {
@@ -1888,9 +1908,8 @@ function renderGroupComparison(avgPower) {
   // (mix of pulling and drafting positions, real-world typical values)
   const configs = [
     { label: 'Solo',    emoji: '🚴', mult: 1.00, note: 'full aero drag' },
-    { label: 'Pair',    emoji: '👥', mult: 0.85, note: '~15% saved avg' },
-    { label: 'Group',   emoji: '🚵', mult: 0.72, note: '~28% saved (5–8)' },
-    { label: 'Peloton', emoji: '🏆', mult: 0.60, note: '~40% saved (20+)' },
+    { label: 'Pair',  emoji: '👥', mult: 0.85, note: '~15% saved avg' },
+    { label: 'Group', emoji: '🚵', mult: 0.72, note: '~28% saved (5–8)' },
   ];
 
   el.innerHTML = configs.map((c, i) => `
