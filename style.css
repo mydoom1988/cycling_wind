@@ -669,17 +669,17 @@ input:focus { border-color: var(--accent); }
 
 #legend {
   position: absolute;
-  bottom: 145px;
+  top: 10px;
   right: 10px;
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid #ccc;
   border-radius: var(--radius);
   padding: 10px 12px;
   z-index: 1000;
-  transition: bottom 0.2s;
 }
-#legend.elev-collapsed { bottom: 45px; }
-#legend.elev-hidden    { bottom: 30px; }
+/* No bottom-offset overrides needed — legend is now top-anchored */
+#legend.elev-collapsed,
+#legend.elev-hidden { top: 10px; }
 .legend-mobile-btn {
   display: none;
   width: 30px;
@@ -1079,7 +1079,6 @@ input:focus { border-color: var(--accent); }
 
   /* Legend: collapsed to a small "i" button on mobile, tap to expand */
   #legend {
-    bottom: auto;
     top: 8px;
     right: 8px;
     padding: 0;
@@ -1087,7 +1086,7 @@ input:focus { border-color: var(--accent); }
     border: none;
   }
   #legend.elev-collapsed,
-  #legend.elev-hidden { top: 8px; bottom: auto; }
+  #legend.elev-hidden { top: 8px; }
   .legend-mobile-btn { display: block; }
   .legend-body { display: none; }
   #legend.expanded {
