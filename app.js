@@ -1670,7 +1670,8 @@ ${trkpts}
     map.invalidateSize();
     map.fitBounds(L.polyline(routePoints.map(p => [p.lat, p.lon])).getBounds(), { padding: [50, 50] });
   });
-  showToast('Route saved — hit Analyze ↑', 'success');
+  // Auto-run wind analysis immediately — no need for the user to click Analyze
+  analyzeWind(routePoints);
 }
 
 // ── Power-along-route chart ───────────────────────────────────

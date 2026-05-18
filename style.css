@@ -996,7 +996,12 @@ input:focus { border-color: var(--accent); }
   gap: 2px;
   text-align: center;
 }
-.group-item-solo { border-color: var(--accent); }
+.group-item-solo {
+  opacity: 0.45;
+  border-style: dashed;
+  cursor: default;
+  pointer-events: none;
+}
 .group-emoji  { font-size: 18px; line-height: 1.2; }
 .group-label  { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 .group-power  { font-size: 18px; font-weight: 700; color: var(--text); }
