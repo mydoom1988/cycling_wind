@@ -686,6 +686,15 @@ function renderTable(results) {
     table.appendChild(row);
   }
 
+  // On mobile always start the wind table collapsed
+  if (window.innerWidth <= 768) {
+    table.classList.add('collapsed');
+    document.getElementById('wind-table-toggle').classList.add('collapsed');
+  } else {
+    table.classList.remove('collapsed');
+    document.getElementById('wind-table-toggle').classList.remove('collapsed');
+  }
+
   document.getElementById('wind-section').classList.remove('hidden');
 }
 
