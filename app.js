@@ -167,6 +167,12 @@ function initUI() {
   };
   document.getElementById('wind-table-header').addEventListener('click', toggleTable);
 
+  // Nutrition collapse
+  document.getElementById('nutrition-header').addEventListener('click', () => {
+    document.getElementById('nutrition-timeline').classList.toggle('collapsed');
+    document.getElementById('nutrition-toggle').classList.toggle('collapsed');
+  });
+
   // Mobile legend "i" expander
   document.getElementById('legend-mobile-btn').addEventListener('click', e => {
     e.stopPropagation();

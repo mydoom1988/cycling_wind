@@ -180,8 +180,11 @@
 
       <!-- Nutrition & hydration schedule -->
       <div id="nutrition-card" class="card hidden">
-        <label class="field-label">Nutrition Schedule</label>
-        <div id="nutrition-timeline" class="nutrition-list"></div>
+        <div class="section-header collapsible" id="nutrition-header">
+          <span class="section-title field-label" style="margin:0">Nutrition Schedule</span>
+          <button id="nutrition-toggle" class="section-toggle collapsed" title="Show / hide nutrition">▾</button>
+        </div>
+        <div id="nutrition-timeline" class="nutrition-list collapsed"></div>
       </div>
 
       <div class="section-header collapsible" id="wind-table-header">

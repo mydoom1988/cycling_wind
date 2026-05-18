@@ -1014,6 +1014,7 @@ input:focus { border-color: var(--accent); }
   flex-direction: column;
   gap: 5px;
 }
+.nutrition-list.collapsed { display: none; }
 .nutrition-item {
   display: flex;
   align-items: flex-start;
