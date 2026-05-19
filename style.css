@@ -684,6 +684,38 @@ input:focus { border-color: var(--accent); }
   padding: 4px 8px;
 }
 
+/* Strava segment click popup */
+.seg-popup-wrap .leaflet-popup-content-wrapper {
+  background: #1e1e1e;
+  border: 1px solid #fc4c02;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.55);
+}
+.seg-popup-wrap .leaflet-popup-tip {
+  background: #1e1e1e;
+}
+.seg-popup {
+  padding: 2px 0;
+}
+.seg-popup-name {
+  display: block;
+  font-weight: 700;
+  font-size: 13px;
+  color: #fc4c02;
+  text-decoration: none;
+  margin-bottom: 4px;
+  line-height: 1.3;
+}
+.seg-popup-name:hover {
+  text-decoration: underline;
+}
+.seg-popup-meta,
+.seg-popup-times {
+  font-size: 11px;
+  color: #ccc;
+  margin-top: 2px;
+}
+
 #legend {
   position: absolute;
   top: 10px;

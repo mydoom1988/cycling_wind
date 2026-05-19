@@ -148,15 +148,8 @@ function setupSegmentsLayer() {
 
 async function fetchAndRenderSegments() {
   if (!segmentsLayer) return;
-  if (map.getZoom() < 11) {
+  if (map.getZoom() < 10) {
     segmentsLayer.clearLayers();
-    // Show a hint tile so the user knows to zoom in
-    const c = map.getCenter();
-    const hint = L.marker(c, {
-      icon: L.divIcon({ html: '<div class="seg-zoom-hint">Zoom in to see segments</div>', className: '' }),
-      interactive: false,
-    });
-    segmentsLayer.addLayer(hint);
     return;
   }
   const b = map.getBounds();
@@ -169,17 +162,34 @@ async function fetchAndRenderSegments() {
     for (const s of segs) {
       if (!s.map?.polyline) continue;
       const coords = decodePolyline5(s.map.polyline);
-      const line = L.polyline(coords, { color: '#fc4c02', weight: 3, opacity: 0.85 });
       const kom = s.xoms?.kom || '—';
       const qom = s.xoms?.qom || '—';
       const distKm = (s.distance / 1000).toFixed(1);
       const grade = s.average_grade != null ? s.average_grade + '%' : '';
+
+      // Thin transparent line — hover brightens it, click opens popup with Strava link
+      const line = L.polyline(coords, { color: '#fc4c02', weight: 2, opacity: 0.45 });
+
+      // Hover tooltip — plain text, no links (tooltips can't be interactive)
       line.bindTooltip(
-        `<strong><a href="https://www.strava.com/segments/${s.id}" target="_blank" style="color:#fc4c02">${s.name}</a></strong><br>` +
-        `${distKm} km${grade ? ' · ' + grade : ''} · ${s.bearing || ''}<br>` +
-        `🥇 ${kom} &nbsp; 🥈 ${qom}`,
+        `<strong>${s.name}</strong><br>${distKm} km${grade ? ' · ' + grade : ''} · ${s.bearing || ''}<br>🥇 ${kom} &nbsp; 🥈 ${qom}`,
         { sticky: true, className: 'segment-tooltip' }
       );
+
+      // Click popup — has the clickable Strava link
+      line.bindPopup(
+        `<div class="seg-popup">
+          <a href="https://www.strava.com/segments/${s.id}" target="_blank" rel="noopener" class="seg-popup-name">${s.name}</a>
+          <div class="seg-popup-meta">${distKm} km${grade ? ' · ' + grade : ''} · ${s.bearing || ''}</div>
+          <div class="seg-popup-times">🥇 ${kom} &nbsp;&nbsp; 🥈 ${qom}</div>
+        </div>`,
+        { className: 'seg-popup-wrap', maxWidth: 220 }
+      );
+
+      // Highlight on hover
+      line.on('mouseover', () => line.setStyle({ opacity: 0.9, weight: 3 }));
+      line.on('mouseout',  () => line.setStyle({ opacity: 0.45, weight: 2 }));
+
       segmentsLayer.addLayer(line);
     }
   } catch (e) {
