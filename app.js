@@ -160,7 +160,7 @@ async function fetchAndRenderSegments() {
     return;
   }
   const b = map.getBounds();
-  const url = `https://www.doogal.co.uk/StravaSegments/?swLat=${b.getSouth().toFixed(5)}&swLng=${b.getWest().toFixed(5)}&neLat=${b.getNorth().toFixed(5)}&neLng=${b.getEast().toFixed(5)}&type=riding&min_cat=0&orderBy=popular&_=${Date.now()}`;
+  const url = `/api/segments?swLat=${b.getSouth().toFixed(5)}&swLng=${b.getWest().toFixed(5)}&neLat=${b.getNorth().toFixed(5)}&neLng=${b.getEast().toFixed(5)}&type=riding&min_cat=0&orderBy=popular`;
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`doogal ${res.status}`);

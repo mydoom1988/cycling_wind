@@ -1,6 +1,7 @@
-const http = require('http');
-const fs   = require('fs');
-const path = require('path');
+const http  = require('http');
+const https = require('https');
+const fs    = require('fs');
+const path  = require('path');
 
 const PORT = process.env.PORT || 3000;
 
@@ -18,6 +19,28 @@ http.createServer((req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
     res.end();
+    return;
+  }
+
+  // Proxy: /api/segments?swLat=...&swLng=...&neLat=...&neLng=...
+  if (req.url.startsWith('/api/segments')) {
+    const qs = req.url.split('?')[1] || '';
+    const target = `https://www.doogal.co.uk/StravaSegments/?${qs}`;
+    https.get(target, { headers: { 'User-Agent': 'Mozilla/5.0' } }, upstream => {
+      let body = '';
+      upstream.on('data', chunk => body += chunk);
+      upstream.on('end', () => {
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'public, max-age=300',
+        });
+        res.end(body);
+      });
+    }).on('error', e => {
+      res.writeHead(502);
+      res.end('Proxy error: ' + e.message);
+    });
     return;
   }
 
