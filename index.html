@@ -191,9 +191,18 @@
       <div class="card">
         <div class="section-header collapsible" id="wind-table-header">
           <span class="section-title field-label" style="margin:0">Wind Along Route</span>
-          <button id="wind-table-toggle" class="section-toggle" title="Show / hide list">▾</button>
+          <button id="wind-table-toggle" class="section-toggle collapsed" title="Show / hide list">▾</button>
         </div>
-        <div id="wind-table"></div>
+        <div id="wind-table" class="collapsed"></div>
+      </div>
+
+      <!-- Segments along route -->
+      <div id="route-segments-card" class="card hidden">
+        <div class="section-header collapsible" id="route-segments-header">
+          <span class="section-title field-label" style="margin:0">Segments Along Route</span>
+          <button id="route-segments-toggle" class="section-toggle collapsed" title="Show / hide segments">▾</button>
+        </div>
+        <div id="route-segments-list" class="seg-route-list collapsed"></div>
       </div>
     </div>
   </div>

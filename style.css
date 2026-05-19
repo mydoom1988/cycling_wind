@@ -716,6 +716,53 @@ input:focus { border-color: var(--accent); }
   margin-top: 2px;
 }
 
+/* Segments along route sidebar list */
+.seg-route-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.seg-route-list.collapsed { display: none; }
+
+.seg-route-item {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid #fc4c02;
+  border-radius: 5px;
+  padding: 7px 10px;
+}
+.seg-route-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.seg-route-name {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seg-route-name:hover { text-decoration: underline; }
+.seg-route-pos {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.seg-route-meta,
+.seg-route-times {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
 #legend {
   position: absolute;
   top: 10px;

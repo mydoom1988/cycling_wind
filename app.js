@@ -232,6 +232,101 @@ function decodePolyline5(encoded) {
   return coords;
 }
 
+// ── Segments Along Route ─────────────────────────────────────
+async function fetchRouteSegments(pts) {
+  const card = document.getElementById('route-segments-card');
+  const list = document.getElementById('route-segments-list');
+  if (!card || !list || !pts || !pts.length) return;
+
+  // Route bounding box
+  let swLat = Infinity, neLat = -Infinity, swLng = Infinity, neLng = -Infinity;
+  for (const p of pts) {
+    if (p.lat < swLat) swLat = p.lat;
+    if (p.lat > neLat) neLat = p.lat;
+    if (p.lon < swLng) swLng = p.lon;
+    if (p.lon > neLng) neLng = p.lon;
+  }
+
+  // Sampled route points for proximity check (≤500 pts for perf)
+  const step = Math.max(1, Math.floor(pts.length / 500));
+  const samplePts   = [];
+  const sampleDists = [];
+  for (let i = 0; i < pts.length; i += step) {
+    samplePts.push([pts[i].lat, pts[i].lon]);
+    sampleDists.push(routeDistances[i] || 0);
+  }
+
+  try {
+    const url = `/api/segments?swLat=${swLat.toFixed(5)}&swLng=${swLng.toFixed(5)}&neLat=${neLat.toFixed(5)}&neLng=${neLng.toFixed(5)}&type=riding&min_cat=0&orderBy=popular`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${res.status}`);
+    const segs = await res.json();
+
+    const THRESHOLD = 45; // metres — segment must pass within this of the route
+    const matched   = [];
+
+    for (const s of segs) {
+      if (!s.map?.polyline) continue;
+      const coords = decodePolyline5(s.map.polyline);
+      let bestDist = Infinity, bestRouteM = 0;
+
+      outer: for (const [slat, slon] of coords) {
+        const cosLat = Math.cos(slat * Math.PI / 180);
+        for (let i = 0; i < samplePts.length; i++) {
+          const dy = (slat - samplePts[i][0]) * 111320;
+          const dx = (slon - samplePts[i][1]) * 111320 * cosLat;
+          const d  = Math.sqrt(dy * dy + dx * dx);
+          if (d < bestDist) { bestDist = d; bestRouteM = sampleDists[i]; }
+          if (bestDist < THRESHOLD) break outer;
+        }
+      }
+
+      if (bestDist < THRESHOLD) matched.push({ ...s, routeM: bestRouteM });
+    }
+
+    matched.sort((a, b) => a.routeM - b.routeM);
+    renderRouteSegments(matched);
+  } catch (e) {
+    console.warn('Route segments fetch failed:', e.message);
+    card.classList.add('hidden');
+  }
+}
+
+function renderRouteSegments(segs) {
+  const card = document.getElementById('route-segments-card');
+  const list = document.getElementById('route-segments-list');
+  if (!card || !list) return;
+
+  if (!segs.length) { card.classList.add('hidden'); return; }
+
+  list.innerHTML = '';
+  for (const s of segs) {
+    const distKm   = (s.distance / 1000).toFixed(1);
+    const grade    = s.average_grade != null
+      ? (s.average_grade >= 0 ? `+${s.average_grade}%` : `${s.average_grade}%`)
+      : '';
+    const kom      = s.xoms?.kom || '—';
+    const qom      = s.xoms?.qom || '—';
+    const routeKm  = (s.routeM / 1000).toFixed(1);
+
+    const item = document.createElement('div');
+    item.className = 'seg-route-item';
+    item.innerHTML =
+      `<div class="seg-route-top">` +
+        `<a href="https://www.strava.com/segments/${s.id}" target="_blank" rel="noopener" class="seg-route-name">${s.name}</a>` +
+        `<span class="seg-route-pos">@ ${routeKm} km</span>` +
+      `</div>` +
+      `<div class="seg-route-meta">${distKm} km${grade ? ' · ' + grade : ''}${s.bearing ? ' · ' + s.bearing : ''}</div>` +
+      `<div class="seg-route-times">🥇 ${kom} &nbsp; 🥈 ${qom}</div>`;
+    list.appendChild(item);
+  }
+
+  // Start collapsed; user expands if interested
+  list.classList.add('collapsed');
+  document.getElementById('route-segments-toggle').classList.add('collapsed');
+  card.classList.remove('hidden');
+}
+
 // ── UI wiring ─────────────────────────────────────────────────
 function initUI() {
   // Tab switching
@@ -279,6 +374,12 @@ function initUI() {
   document.getElementById('nutrition-header').addEventListener('click', () => {
     document.getElementById('nutrition-timeline').classList.toggle('collapsed');
     document.getElementById('nutrition-toggle').classList.toggle('collapsed');
+  });
+
+  // Segments along route collapse
+  document.getElementById('route-segments-header').addEventListener('click', () => {
+    document.getElementById('route-segments-list').classList.toggle('collapsed');
+    document.getElementById('route-segments-toggle').classList.toggle('collapsed');
   });
 
   // Mobile legend "i" expander
@@ -411,6 +512,8 @@ function displayRoute(pts) {
 
   document.getElementById('wind-section').classList.add('hidden');
   document.getElementById('wind-table').innerHTML = '';
+  document.getElementById('route-segments-card').classList.add('hidden');
+  document.getElementById('route-segments-list').innerHTML = '';
   lastResults = [];
 }
 
@@ -807,16 +910,12 @@ function renderTable(results) {
     table.appendChild(row);
   }
 
-  // On mobile always start the wind table collapsed
-  if (window.innerWidth <= 768) {
-    table.classList.add('collapsed');
-    document.getElementById('wind-table-toggle').classList.add('collapsed');
-  } else {
-    table.classList.remove('collapsed');
-    document.getElementById('wind-table-toggle').classList.remove('collapsed');
-  }
+  // Always start wind table collapsed — user expands if needed
+  table.classList.add('collapsed');
+  document.getElementById('wind-table-toggle').classList.add('collapsed');
 
   document.getElementById('wind-section').classList.remove('hidden');
+  fetchRouteSegments(routePoints);
 }
 
 // ── Shared chart scrub (elevation ↔ power ↔ map) ─────────────
