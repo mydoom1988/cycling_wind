@@ -71,28 +71,6 @@
       <div id="file-name" class="file-name hidden"></div>
     </div>
 
-    <!-- Segments CSV card -->
-    <div class="card">
-      <div class="card-header">
-        <label class="field-label">Segments</label>
-        <button class="btn-icon" id="seg-load-btn" title="Load segments from CSV">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-            <polyline points="17 8 12 3 7 8"/>
-            <line x1="12" y1="3" x2="12" y2="15"/>
-          </svg>
-          <span>Load CSV</span>
-        </button>
-      </div>
-    </div>
-    <div id="segments-card" class="card hidden">
-      <div class="section-header collapsible" id="segments-header">
-        <span class="section-title field-label" style="margin:0">Your Segments</span>
-        <button id="segments-toggle" class="section-toggle collapsed" title="Show / hide segments">▾</button>
-      </div>
-      <div id="segments-list" class="segments-list collapsed"></div>
-    </div>
-
     <div id="route-info" class="card hidden">
       <div class="card-header">
         <h3>Route</h3>
@@ -328,7 +306,6 @@
     </div>
   </div>
 
-  <input type="file" id="seg-csv-input" accept=".csv" hidden />
   <div id="toast" class="hidden"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

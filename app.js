@@ -94,6 +94,7 @@ function initMap() {
   markersLayer    = L.layerGroup().addTo(map);
 
   setupRainLayer();
+  setupSegmentsLayer();
 }
 
 async function setupRainLayer() {
@@ -124,59 +125,82 @@ async function setupRainLayer() {
   }
 }
 
-// ── Segments (CSV upload → sidebar list) ─────────────────────
-let loadedSegments = [];
+// ── Strava segments via doogal.co.uk (no auth needed) ────────
+let segmentsLayer  = null;
+let segDebounce    = null;
 
-// CSV format: ID,Name,Distance (metres),Grade (%),KOM (seconds),QOM (seconds),Athletes,Category,Bearing
-function parseSegmentsCsv(text) {
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.length < 2) return [];
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-  const col = k => headers.findIndex(h => h.includes(k));
-  const segs = [];
-  for (let i = 1; i < lines.length; i++) {
-    // Handle quoted fields (e.g. names with commas)
-    const vals = lines[i].match(/(".*?"|[^,]+|(?<=,)(?=,)|^(?=,)|(?<=,)$)/g)
-                 ?.map(v => v.replace(/^"|"$/g, '').trim()) || [];
-    if (!vals[0]) continue;
-    const id      = vals[col('id')]   || '';
-    const name    = vals[col('name')] || `Segment ${i}`;
-    const distM   = parseFloat(vals[col('distance')]) || 0;
-    const grade   = parseFloat(vals[col('grade')])    ?? null;
-    const kom     = parseInt(vals[col('kom')])         || null;
-    const qom     = parseInt(vals[col('qom')])         || null;
-    const bearing = vals[col('bearing')] || '';
-    segs.push({ id, name, distM, grade, kom, qom, bearing });
+function setupSegmentsLayer() {
+  segmentsLayer = L.layerGroup();
+  if (windLayerCtrl) windLayerCtrl.addOverlay(segmentsLayer, '🏅 Segments');
+
+  map.on('overlayadd', e => {
+    if (e.layer === segmentsLayer) fetchAndRenderSegments();
+  });
+  map.on('overlayremove', e => {
+    if (e.layer === segmentsLayer) segmentsLayer.clearLayers();
+  });
+  map.on('moveend zoomend', () => {
+    if (!map.hasLayer(segmentsLayer)) return;
+    clearTimeout(segDebounce);
+    segDebounce = setTimeout(fetchAndRenderSegments, 700);
+  });
+}
+
+async function fetchAndRenderSegments() {
+  if (!segmentsLayer) return;
+  if (map.getZoom() < 11) {
+    segmentsLayer.clearLayers();
+    // Show a hint tile so the user knows to zoom in
+    const c = map.getCenter();
+    const hint = L.marker(c, {
+      icon: L.divIcon({ html: '<div class="seg-zoom-hint">Zoom in to see segments</div>', className: '' }),
+      interactive: false,
+    });
+    segmentsLayer.addLayer(hint);
+    return;
   }
-  return segs;
+  const b = map.getBounds();
+  const url = `https://www.doogal.co.uk/StravaSegments/?swLat=${b.getSouth().toFixed(5)}&swLng=${b.getWest().toFixed(5)}&neLat=${b.getNorth().toFixed(5)}&neLng=${b.getEast().toFixed(5)}&type=riding&min_cat=0&orderBy=popular&_=${Date.now()}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`doogal ${res.status}`);
+    const segs = await res.json();
+    segmentsLayer.clearLayers();
+    for (const s of segs) {
+      if (!s.map?.polyline) continue;
+      const coords = decodePolyline5(s.map.polyline);
+      const line = L.polyline(coords, { color: '#fc4c02', weight: 3, opacity: 0.85 });
+      const kom = s.xoms?.kom || '—';
+      const qom = s.xoms?.qom || '—';
+      const distKm = (s.distance / 1000).toFixed(1);
+      const grade = s.average_grade != null ? s.average_grade + '%' : '';
+      line.bindTooltip(
+        `<strong><a href="https://www.strava.com/segments/${s.id}" target="_blank" style="color:#fc4c02">${s.name}</a></strong><br>` +
+        `${distKm} km${grade ? ' · ' + grade : ''} · ${s.bearing || ''}<br>` +
+        `🥇 ${kom} &nbsp; 🥈 ${qom}`,
+        { sticky: true, className: 'segment-tooltip' }
+      );
+      segmentsLayer.addLayer(line);
+    }
+  } catch (e) {
+    console.warn('Segments fetch failed:', e.message);
+  }
 }
 
-function fmtTime(secs) {
-  if (!secs) return '—';
-  const m = Math.floor(secs / 60), s = secs % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-function renderSegmentsList() {
-  const card = document.getElementById('segments-card');
-  const list = document.getElementById('segments-list');
-  if (!card || !list) return;
-  if (!loadedSegments.length) { card.classList.add('hidden'); return; }
-
-  list.innerHTML = loadedSegments.map(s => `
-    <div class="seg-row">
-      <div class="seg-main">
-        <a class="seg-name" href="https://www.strava.com/segments/${s.id}" target="_blank" rel="noopener">${s.name}</a>
-        <span class="seg-meta">${(s.distM / 1000).toFixed(1)} km · ${s.grade != null ? s.grade + '%' : ''} · ${s.bearing}</span>
-      </div>
-      <div class="seg-times">
-        <span class="seg-kom" title="KOM">🥇 ${fmtTime(s.kom)}</span>
-        <span class="seg-qom" title="QOM">🥈 ${fmtTime(s.qom)}</span>
-      </div>
-    </div>`).join('');
-
-  card.classList.remove('hidden');
-  showToast(`${loadedSegments.length} segments loaded`, 'success');
+// Standard Google polyline precision-5 decoder (Strava/doogal segment geometry)
+function decodePolyline5(encoded) {
+  const coords = [];
+  let index = 0, lat = 0, lng = 0;
+  while (index < encoded.length) {
+    let shift = 0, result = 0, b;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    shift = result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+    coords.push([lat / 1e5, lng / 1e5]);
+  }
+  return coords;
 }
 
 // ── UI wiring ─────────────────────────────────────────────────
@@ -204,28 +228,6 @@ function initUI() {
     if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
   });
   input.addEventListener('change', () => { if (input.files[0]) handleFile(input.files[0]); });
-
-  // Segments — Load CSV button + collapse toggle
-  document.getElementById('seg-load-btn').addEventListener('click', () =>
-    document.getElementById('seg-csv-input').click());
-  document.getElementById('segments-header').addEventListener('click', () => {
-    document.getElementById('segments-list').classList.toggle('collapsed');
-    document.getElementById('segments-toggle').classList.toggle('collapsed');
-  });
-
-  const segInput = document.getElementById('seg-csv-input');
-  segInput.addEventListener('change', () => {
-    const file = segInput.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      loadedSegments = parseSegmentsCsv(ev.target.result);
-      if (!loadedSegments.length) { showToast('No segments found in CSV', 'error'); return; }
-      renderSegmentsList();
-    };
-    reader.readAsText(file);
-    segInput.value = '';
-  });
 
   document.getElementById('ride-speed').addEventListener('input', updateFinishTime);
   document.getElementById('ride-time').addEventListener('input', updateFinishTime);

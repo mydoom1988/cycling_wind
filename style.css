@@ -666,6 +666,15 @@ input:focus { border-color: var(--accent); }
   white-space: nowrap;
   z-index: 600;
 }
+.seg-zoom-hint {
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
 .segment-tooltip {
   background: #1a1a1a !important;
   border: 1px solid #fc4c02 !important;
@@ -674,33 +683,6 @@ input:focus { border-color: var(--accent); }
   border-radius: 4px;
   padding: 4px 8px;
 }
-/* ── Segments list ───────────────────────────────────────────── */
-.segments-list { display: flex; flex-direction: column; gap: 4px; }
-.segments-list.collapsed { display: none; }
-.seg-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
-}
-.seg-row:last-child { border-bottom: none; }
-.seg-main { flex: 1; min-width: 0; }
-.seg-name {
-  display: block;
-  font-size: 12px;
-  font-weight: 600;
-  color: #fc4c02;
-  text-decoration: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.seg-name:hover { text-decoration: underline; }
-.seg-meta { font-size: 10px; color: var(--text-muted); }
-.seg-times { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; white-space: nowrap; }
-.seg-kom, .seg-qom { font-size: 10px; color: var(--text-muted); }
 
 #legend {
   position: absolute;
