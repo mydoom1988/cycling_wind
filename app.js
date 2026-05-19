@@ -525,6 +525,13 @@ async function _applyWindGrid(atTime) {
       [center.lat + 5, center.lng + 7]    // NE corner
     );
     const data = await loadWindGrid(fixedBounds, atTime);
+
+    // Scale particle density to average wind speed:
+    // calm (~1 m/s) → 0.0001, moderate (~7 m/s) → 0.0005, strong (15+ m/s) → 0.0014
+    const us = data[0].data, vs = data[1].data;
+    const avgSpeed = us.reduce((sum, u, i) => sum + Math.sqrt(u * u + vs[i] * vs[i]), 0) / us.length;
+    const particleMultiplier = Math.min(0.0014, Math.max(0.0001, avgSpeed * 0.00008));
+
     if (velocityLayer) { map.removeLayer(velocityLayer); velocityLayer = null; }
     velocityLayer = L.velocityLayer({
       displayValues: true,
@@ -539,7 +546,7 @@ async function _applyWindGrid(atTime) {
       velocityScale: 0.012,
       particleAge: 60,
       lineWidth: 1.2,
-      particleMultiplier: 0.0004,
+      particleMultiplier,
       frameRate: 16,
       colorScale: [
         'rgba(255,255,255,0.85)',
