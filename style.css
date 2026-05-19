@@ -990,7 +990,7 @@ input:focus { border-color: var(--accent); }
 /* ── Group comparison card ───────────────────────────────────── */
 .group-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 6px;
 }
 .group-item {
@@ -1005,7 +1005,6 @@ input:focus { border-color: var(--accent); }
   text-align: center;
 }
 .group-item-solo {
-  opacity: 0.45;
   border-style: dashed;
   cursor: default;
   pointer-events: none;
@@ -1127,7 +1126,7 @@ input:focus { border-color: var(--accent); }
 
   /* Power panel shorter on mobile */
   #power-svg { height: 70px; }
-  .group-grid { grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .group-grid { grid-template-columns: repeat(3, 1fr); gap: 4px; }
   .group-item { padding: 6px 4px; }
   .group-power { font-size: 15px; }
 
