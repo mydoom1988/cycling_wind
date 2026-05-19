@@ -126,15 +126,17 @@ async function setupRainLayer() {
 }
 
 // ── Strava segments via doogal.co.uk (no auth needed) ────────
-let segmentsLayer  = null;
-let segDebounce    = null;
+let segmentsLayer     = null;
+let segDebounce       = null;
+let drawSegmentsLayer = null;
+let drawSegDebounce   = null;
 
 function setupSegmentsLayer() {
   segmentsLayer = L.layerGroup();
   if (windLayerCtrl) windLayerCtrl.addOverlay(segmentsLayer, '🏅 Segments');
 
   map.on('overlayadd', e => {
-    if (e.layer === segmentsLayer) fetchAndRenderSegments();
+    if (e.layer === segmentsLayer) fetchAndRenderSegments(map, segmentsLayer);
   });
   map.on('overlayremove', e => {
     if (e.layer === segmentsLayer) segmentsLayer.clearLayers();
@@ -142,23 +144,40 @@ function setupSegmentsLayer() {
   map.on('moveend zoomend', () => {
     if (!map.hasLayer(segmentsLayer)) return;
     clearTimeout(segDebounce);
-    segDebounce = setTimeout(fetchAndRenderSegments, 700);
+    segDebounce = setTimeout(() => fetchAndRenderSegments(map, segmentsLayer), 700);
   });
 }
 
-async function fetchAndRenderSegments() {
-  if (!segmentsLayer) return;
-  if (map.getZoom() < 10) {
-    segmentsLayer.clearLayers();
+function setupDrawSegmentsLayer(drawLayerCtrl) {
+  drawSegmentsLayer = L.layerGroup();
+  drawLayerCtrl.addOverlay(drawSegmentsLayer, '🏅 Segments');
+
+  drawMap.on('overlayadd', e => {
+    if (e.layer === drawSegmentsLayer) fetchAndRenderSegments(drawMap, drawSegmentsLayer);
+  });
+  drawMap.on('overlayremove', e => {
+    if (e.layer === drawSegmentsLayer) drawSegmentsLayer.clearLayers();
+  });
+  drawMap.on('moveend zoomend', () => {
+    if (!drawMap.hasLayer(drawSegmentsLayer)) return;
+    clearTimeout(drawSegDebounce);
+    drawSegDebounce = setTimeout(() => fetchAndRenderSegments(drawMap, drawSegmentsLayer), 700);
+  });
+}
+
+async function fetchAndRenderSegments(targetMap, targetLayer) {
+  if (!targetLayer) return;
+  if (targetMap.getZoom() < 10) {
+    targetLayer.clearLayers();
     return;
   }
-  const b = map.getBounds();
+  const b = targetMap.getBounds();
   const url = `/api/segments?swLat=${b.getSouth().toFixed(5)}&swLng=${b.getWest().toFixed(5)}&neLat=${b.getNorth().toFixed(5)}&neLng=${b.getEast().toFixed(5)}&type=riding&min_cat=0&orderBy=popular`;
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`doogal ${res.status}`);
     const segs = await res.json();
-    segmentsLayer.clearLayers();
+    targetLayer.clearLayers();
     for (const s of segs) {
       if (!s.map?.polyline) continue;
       const coords = decodePolyline5(s.map.polyline);
@@ -190,7 +209,7 @@ async function fetchAndRenderSegments() {
       line.on('mouseover', () => line.setStyle({ opacity: 0.9, weight: 3 }));
       line.on('mouseout',  () => line.setStyle({ opacity: 0.45, weight: 2 }));
 
-      segmentsLayer.addLayer(line);
+      targetLayer.addLayer(line);
     }
   } catch (e) {
     console.warn('Segments fetch failed:', e.message);
@@ -1469,11 +1488,12 @@ function ensureDrawMap() {
     }
   ).addTo(drawMap);
 
-  L.control.layers(
+  const drawLayerCtrl = L.control.layers(
     { '🛰 Hybrid': drawHybrid, '🗺 Outdoor': drawOutdoor },
     {},
     { collapsed: true, position: 'topright' }
   ).addTo(drawMap);
+  setupDrawSegmentsLayer(drawLayerCtrl);
   drawRouteLayer   = L.layerGroup().addTo(drawMap);
   drawMarkersLayer = L.layerGroup().addTo(drawMap);
   drawMap.on('click', e => addWaypoint(e.latlng.lat, e.latlng.lng));
