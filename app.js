@@ -125,95 +125,78 @@ async function setupRainLayer() {
   }
 }
 
-// ── Strava segments overlay ───────────────────────────────────
-let segmentsLayer  = null;
-let stravaToken    = localStorage.getItem('strava_token') || null;
-let segMoveTimer   = null;
+// ── Segments overlay (CSV upload) ────────────────────────────
+let segmentsLayer = null;
+let loadedSegments = [];   // parsed from CSV
 
 function setupStravaSegmentsLayer() {
   segmentsLayer = L.layerGroup();
   if (windLayerCtrl) {
-    windLayerCtrl.addOverlay(segmentsLayer, '🏅 Segments (Strava)');
+    windLayerCtrl.addOverlay(segmentsLayer, '🏅 Segments');
   }
 
-  map.on('overlayadd', async e => {
+  map.on('overlayadd', e => {
     if (e.layer !== segmentsLayer) return;
-    if (!stravaToken) {
-      const tok = prompt(
-        'Paste your Strava access token to load segments.\n\n' +
-        'Get one free at:\nhttps://developers.strava.com/playground\n' +
-        '(click "Authorize" → use scope "read" → copy the access_token)\n\n' +
-        'Token is saved locally and never sent anywhere except Strava.'
-      );
-      if (!tok) { map.removeLayer(segmentsLayer); return; }
-      stravaToken = tok.trim();
-      localStorage.setItem('strava_token', stravaToken);
+    if (!loadedSegments.length) {
+      // No CSV loaded yet — open file picker
+      document.getElementById('seg-csv-input').click();
+    } else {
+      renderSegmentLayer();
     }
-    await refreshStravaSegments();
   });
 
   map.on('overlayremove', e => {
     if (e.layer === segmentsLayer) segmentsLayer.clearLayers();
   });
-
-  map.on('moveend zoomend', () => {
-    if (!map.hasLayer(segmentsLayer)) return;
-    clearTimeout(segMoveTimer);
-    segMoveTimer = setTimeout(refreshStravaSegments, 600);
-  });
 }
 
-async function refreshStravaSegments() {
-  if (!segmentsLayer || !stravaToken) return;
-  const b = map.getBounds();
-  const bounds = `${b.getSouth().toFixed(5)},${b.getWest().toFixed(5)},${b.getNorth().toFixed(5)},${b.getEast().toFixed(5)}`;
-  try {
-    const res = await fetch(
-      `https://www.strava.com/api/v3/segments/explore?bounds=${bounds}&activity_type=riding`,
-      { headers: { Authorization: `Bearer ${stravaToken}` } }
-    );
-    if (res.status === 401) {
-      stravaToken = null;
-      localStorage.removeItem('strava_token');
-      map.removeLayer(segmentsLayer);
-      showToast('Strava token expired — toggle Segments off/on to re-enter', 'error');
-      return;
-    }
-    if (!res.ok) throw new Error(`Strava ${res.status}`);
-    const data = await res.json();
-    segmentsLayer.clearLayers();
-    for (const seg of data.segments || []) {
-      if (!seg.points) continue;
-      // Strava uses standard polyline precision 5
-      const coords = decodePolyline5(seg.points);
-      const line = L.polyline(coords, { color: '#fc4c02', weight: 3, opacity: 0.85 });
-      line.bindTooltip(
-        `<strong>${seg.name}</strong><br>` +
-        `${(seg.distance / 1000).toFixed(1)} km · ↑${Math.round(seg.elevation_difference)} m · ` +
-        `⭐ ${seg.climb_category_desc !== 'NC' ? seg.climb_category_desc : 'flat'}`,
-        { sticky: true, className: 'segment-tooltip' }
-      );
-      segmentsLayer.addLayer(line);
-    }
-  } catch (e) {
-    console.warn('Strava segments fetch failed:', e.message);
+function renderSegmentLayer() {
+  segmentsLayer.clearLayers();
+  for (const seg of loadedSegments) {
+    const line = L.polyline(seg.coords, { color: '#fc4c02', weight: 3, opacity: 0.85 });
+    let tip = `<strong>${seg.name}</strong>`;
+    if (seg.distance) tip += `<br>${seg.distance}`;
+    if (seg.elevation) tip += ` · ↑${seg.elevation}`;
+    line.bindTooltip(tip, { sticky: true, className: 'segment-tooltip' });
+    segmentsLayer.addLayer(line);
   }
+  showToast(`${loadedSegments.length} segments loaded`, 'success');
 }
 
-// Standard Google polyline precision-5 decoder (Strava segment geometry)
-function decodePolyline5(encoded) {
-  const coords = [];
-  let index = 0, lat = 0, lng = 0;
-  while (index < encoded.length) {
-    let shift = 0, result = 0, b;
-    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
-    shift = result = 0;
-    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
-    coords.push([lat / 1e5, lng / 1e5]);
+// CSV format (header row required):
+//   name, lat_start, lon_start, lat_end, lon_end [, distance, elevation_gain]
+// OR with full path:
+//   name, points, distance, elevation_gain
+//   where points = "lat1,lon1;lat2,lon2;..."
+function parseSegmentsCsv(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+  const col = k => headers.indexOf(k);
+  const segments = [];
+  for (let i = 1; i < lines.length; i++) {
+    const vals = lines[i].split(',').map(v => v.trim());
+    if (!vals[0]) continue;
+    const name = vals[col('name')] || `Segment ${i}`;
+    let coords;
+    if (col('points') >= 0 && vals[col('points')]) {
+      coords = vals[col('points')].split(';').map(p => {
+        const [la, lo] = p.trim().split(/\s+/);
+        return [parseFloat(la), parseFloat(lo)];
+      }).filter(c => !isNaN(c[0]));
+    } else {
+      const la1 = parseFloat(vals[col('lat_start')]);
+      const lo1 = parseFloat(vals[col('lon_start')]);
+      const la2 = parseFloat(vals[col('lat_end')]);
+      const lo2 = parseFloat(vals[col('lon_end')]);
+      if (isNaN(la1) || isNaN(lo1) || isNaN(la2) || isNaN(lo2)) continue;
+      coords = [[la1, lo1], [la2, lo2]];
+    }
+    const dist = col('distance') >= 0 ? vals[col('distance')] : null;
+    const elev = col('elevation_gain') >= 0 ? vals[col('elevation_gain')] : null;
+    segments.push({ name, coords, distance: dist, elevation: elev });
   }
-  return coords;
+  return segments;
 }
 
 // ── UI wiring ─────────────────────────────────────────────────
@@ -241,6 +224,22 @@ function initUI() {
     if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
   });
   input.addEventListener('change', () => { if (input.files[0]) handleFile(input.files[0]); });
+
+  // Segment CSV upload
+  const segInput = document.getElementById('seg-csv-input');
+  segInput.addEventListener('change', () => {
+    const file = segInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      loadedSegments = parseSegmentsCsv(ev.target.result);
+      if (!loadedSegments.length) { showToast('No segments found in CSV', 'error'); return; }
+      if (map.hasLayer(segmentsLayer)) renderSegmentLayer();
+      else { segmentsLayer.addTo(map); renderSegmentLayer(); }
+    };
+    reader.readAsText(file);
+    segInput.value = '';
+  });
 
   document.getElementById('ride-speed').addEventListener('input', updateFinishTime);
   document.getElementById('ride-time').addEventListener('input', updateFinishTime);
