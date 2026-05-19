@@ -94,7 +94,6 @@ function initMap() {
   markersLayer    = L.layerGroup().addTo(map);
 
   setupRainLayer();
-  setupStravaSegmentsLayer();
 }
 
 async function setupRainLayer() {
@@ -125,78 +124,59 @@ async function setupRainLayer() {
   }
 }
 
-// ── Segments overlay (CSV upload) ────────────────────────────
-let segmentsLayer = null;
-let loadedSegments = [];   // parsed from CSV
+// ── Segments (CSV upload → sidebar list) ─────────────────────
+let loadedSegments = [];
 
-function setupStravaSegmentsLayer() {
-  segmentsLayer = L.layerGroup();
-  if (windLayerCtrl) {
-    windLayerCtrl.addOverlay(segmentsLayer, '🏅 Segments');
-  }
-
-  map.on('overlayadd', e => {
-    if (e.layer !== segmentsLayer) return;
-    if (!loadedSegments.length) {
-      // No CSV loaded yet — open file picker
-      document.getElementById('seg-csv-input').click();
-    } else {
-      renderSegmentLayer();
-    }
-  });
-
-  map.on('overlayremove', e => {
-    if (e.layer === segmentsLayer) segmentsLayer.clearLayers();
-  });
-}
-
-function renderSegmentLayer() {
-  segmentsLayer.clearLayers();
-  for (const seg of loadedSegments) {
-    const line = L.polyline(seg.coords, { color: '#fc4c02', weight: 3, opacity: 0.85 });
-    let tip = `<strong>${seg.name}</strong>`;
-    if (seg.distance) tip += `<br>${seg.distance}`;
-    if (seg.elevation) tip += ` · ↑${seg.elevation}`;
-    line.bindTooltip(tip, { sticky: true, className: 'segment-tooltip' });
-    segmentsLayer.addLayer(line);
-  }
-  showToast(`${loadedSegments.length} segments loaded`, 'success');
-}
-
-// CSV format (header row required):
-//   name, lat_start, lon_start, lat_end, lon_end [, distance, elevation_gain]
-// OR with full path:
-//   name, points, distance, elevation_gain
-//   where points = "lat1,lon1;lat2,lon2;..."
+// CSV format: ID,Name,Distance (metres),Grade (%),KOM (seconds),QOM (seconds),Athletes,Category,Bearing
 function parseSegmentsCsv(text) {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
   const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-  const col = k => headers.indexOf(k);
-  const segments = [];
+  const col = k => headers.findIndex(h => h.includes(k));
+  const segs = [];
   for (let i = 1; i < lines.length; i++) {
-    const vals = lines[i].split(',').map(v => v.trim());
+    // Handle quoted fields (e.g. names with commas)
+    const vals = lines[i].match(/(".*?"|[^,]+|(?<=,)(?=,)|^(?=,)|(?<=,)$)/g)
+                 ?.map(v => v.replace(/^"|"$/g, '').trim()) || [];
     if (!vals[0]) continue;
-    const name = vals[col('name')] || `Segment ${i}`;
-    let coords;
-    if (col('points') >= 0 && vals[col('points')]) {
-      coords = vals[col('points')].split(';').map(p => {
-        const [la, lo] = p.trim().split(/\s+/);
-        return [parseFloat(la), parseFloat(lo)];
-      }).filter(c => !isNaN(c[0]));
-    } else {
-      const la1 = parseFloat(vals[col('lat_start')]);
-      const lo1 = parseFloat(vals[col('lon_start')]);
-      const la2 = parseFloat(vals[col('lat_end')]);
-      const lo2 = parseFloat(vals[col('lon_end')]);
-      if (isNaN(la1) || isNaN(lo1) || isNaN(la2) || isNaN(lo2)) continue;
-      coords = [[la1, lo1], [la2, lo2]];
-    }
-    const dist = col('distance') >= 0 ? vals[col('distance')] : null;
-    const elev = col('elevation_gain') >= 0 ? vals[col('elevation_gain')] : null;
-    segments.push({ name, coords, distance: dist, elevation: elev });
+    const id      = vals[col('id')]   || '';
+    const name    = vals[col('name')] || `Segment ${i}`;
+    const distM   = parseFloat(vals[col('distance')]) || 0;
+    const grade   = parseFloat(vals[col('grade')])    ?? null;
+    const kom     = parseInt(vals[col('kom')])         || null;
+    const qom     = parseInt(vals[col('qom')])         || null;
+    const bearing = vals[col('bearing')] || '';
+    segs.push({ id, name, distM, grade, kom, qom, bearing });
   }
-  return segments;
+  return segs;
+}
+
+function fmtTime(secs) {
+  if (!secs) return '—';
+  const m = Math.floor(secs / 60), s = secs % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function renderSegmentsList() {
+  const card = document.getElementById('segments-card');
+  const list = document.getElementById('segments-list');
+  if (!card || !list) return;
+  if (!loadedSegments.length) { card.classList.add('hidden'); return; }
+
+  list.innerHTML = loadedSegments.map(s => `
+    <div class="seg-row">
+      <div class="seg-main">
+        <a class="seg-name" href="https://www.strava.com/segments/${s.id}" target="_blank" rel="noopener">${s.name}</a>
+        <span class="seg-meta">${(s.distM / 1000).toFixed(1)} km · ${s.grade != null ? s.grade + '%' : ''} · ${s.bearing}</span>
+      </div>
+      <div class="seg-times">
+        <span class="seg-kom" title="KOM">🥇 ${fmtTime(s.kom)}</span>
+        <span class="seg-qom" title="QOM">🥈 ${fmtTime(s.qom)}</span>
+      </div>
+    </div>`).join('');
+
+  card.classList.remove('hidden');
+  showToast(`${loadedSegments.length} segments loaded`, 'success');
 }
 
 // ── UI wiring ─────────────────────────────────────────────────
@@ -225,7 +205,14 @@ function initUI() {
   });
   input.addEventListener('change', () => { if (input.files[0]) handleFile(input.files[0]); });
 
-  // Segment CSV upload
+  // Segments — Load CSV button + collapse toggle
+  document.getElementById('seg-load-btn').addEventListener('click', () =>
+    document.getElementById('seg-csv-input').click());
+  document.getElementById('segments-header').addEventListener('click', () => {
+    document.getElementById('segments-list').classList.toggle('collapsed');
+    document.getElementById('segments-toggle').classList.toggle('collapsed');
+  });
+
   const segInput = document.getElementById('seg-csv-input');
   segInput.addEventListener('change', () => {
     const file = segInput.files[0];
@@ -234,8 +221,7 @@ function initUI() {
     reader.onload = ev => {
       loadedSegments = parseSegmentsCsv(ev.target.result);
       if (!loadedSegments.length) { showToast('No segments found in CSV', 'error'); return; }
-      if (map.hasLayer(segmentsLayer)) renderSegmentLayer();
-      else { segmentsLayer.addTo(map); renderSegmentLayer(); }
+      renderSegmentsList();
     };
     reader.readAsText(file);
     segInput.value = '';
