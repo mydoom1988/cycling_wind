@@ -94,6 +94,7 @@ function initMap() {
   markersLayer    = L.layerGroup().addTo(map);
 
   setupRainLayer();
+  setupStravaSegmentsLayer();
 }
 
 async function setupRainLayer() {
@@ -122,6 +123,97 @@ async function setupRainLayer() {
   } catch (e) {
     console.warn('Rain layer setup failed:', e.message);
   }
+}
+
+// ── Strava segments overlay ───────────────────────────────────
+let segmentsLayer  = null;
+let stravaToken    = localStorage.getItem('strava_token') || null;
+let segMoveTimer   = null;
+
+function setupStravaSegmentsLayer() {
+  segmentsLayer = L.layerGroup();
+  if (windLayerCtrl) {
+    windLayerCtrl.addOverlay(segmentsLayer, '🏅 Segments (Strava)');
+  }
+
+  map.on('overlayadd', async e => {
+    if (e.layer !== segmentsLayer) return;
+    if (!stravaToken) {
+      const tok = prompt(
+        'Paste your Strava access token to load segments.\n\n' +
+        'Get one free at:\nhttps://developers.strava.com/playground\n' +
+        '(click "Authorize" → use scope "read" → copy the access_token)\n\n' +
+        'Token is saved locally and never sent anywhere except Strava.'
+      );
+      if (!tok) { map.removeLayer(segmentsLayer); return; }
+      stravaToken = tok.trim();
+      localStorage.setItem('strava_token', stravaToken);
+    }
+    await refreshStravaSegments();
+  });
+
+  map.on('overlayremove', e => {
+    if (e.layer === segmentsLayer) segmentsLayer.clearLayers();
+  });
+
+  map.on('moveend zoomend', () => {
+    if (!map.hasLayer(segmentsLayer)) return;
+    clearTimeout(segMoveTimer);
+    segMoveTimer = setTimeout(refreshStravaSegments, 600);
+  });
+}
+
+async function refreshStravaSegments() {
+  if (!segmentsLayer || !stravaToken) return;
+  const b = map.getBounds();
+  const bounds = `${b.getSouth().toFixed(5)},${b.getWest().toFixed(5)},${b.getNorth().toFixed(5)},${b.getEast().toFixed(5)}`;
+  try {
+    const res = await fetch(
+      `https://www.strava.com/api/v3/segments/explore?bounds=${bounds}&activity_type=riding`,
+      { headers: { Authorization: `Bearer ${stravaToken}` } }
+    );
+    if (res.status === 401) {
+      stravaToken = null;
+      localStorage.removeItem('strava_token');
+      map.removeLayer(segmentsLayer);
+      showToast('Strava token expired — toggle Segments off/on to re-enter', 'error');
+      return;
+    }
+    if (!res.ok) throw new Error(`Strava ${res.status}`);
+    const data = await res.json();
+    segmentsLayer.clearLayers();
+    for (const seg of data.segments || []) {
+      if (!seg.points) continue;
+      // Strava uses standard polyline precision 5
+      const coords = decodePolyline5(seg.points);
+      const line = L.polyline(coords, { color: '#fc4c02', weight: 3, opacity: 0.85 });
+      line.bindTooltip(
+        `<strong>${seg.name}</strong><br>` +
+        `${(seg.distance / 1000).toFixed(1)} km · ↑${Math.round(seg.elevation_difference)} m · ` +
+        `⭐ ${seg.climb_category_desc !== 'NC' ? seg.climb_category_desc : 'flat'}`,
+        { sticky: true, className: 'segment-tooltip' }
+      );
+      segmentsLayer.addLayer(line);
+    }
+  } catch (e) {
+    console.warn('Strava segments fetch failed:', e.message);
+  }
+}
+
+// Standard Google polyline precision-5 decoder (Strava segment geometry)
+function decodePolyline5(encoded) {
+  const coords = [];
+  let index = 0, lat = 0, lng = 0;
+  while (index < encoded.length) {
+    let shift = 0, result = 0, b;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    shift = result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+    coords.push([lat / 1e5, lng / 1e5]);
+  }
+  return coords;
 }
 
 // ── UI wiring ─────────────────────────────────────────────────
